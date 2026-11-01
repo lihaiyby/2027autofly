@@ -576,3 +576,39 @@ GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_map
    确认 `map_valid` 是否为 False、`center_source` 是否为空；
 2. 若确为 False，查投影节点的 TF 查询失败原因（回合里 TF_REPEATED 警告约 3900 条）；
 3. 临时验证手段：`require_map_for_candidates:=false` 跑一轮，看是否能投递。
+
+---
+
+## 20. 阶段二十：投递阻塞点收敛到"检测未精修 / 可能定位漂移"（11-01 20:30）
+
+**已修复并实测**（本轮 4 处，飞行链路现已稳定）
+1. `COM_DISARM_PRFLT=-1`：PX4 解锁后不再自动上锁。
+2. `COM_OF_LOSS_T=5.0`：视觉链满载时 20 Hz 循环卡顿不会把 OFFBOARD 打掉。
+3. 起飞失败自动重试（最多 3 次，重解 OFFBOARD）。
+4. `odom_to_tf` 去重由 `<=` 改 `==`。
+
+实测：`takeoff ok=True`、三靶全部到达、走廊 6 段全过、尽头 H 板降落
+`final=(8.77,-4.18,0.13)` —— 除投递外整条航线稳定。
+
+**投递阻塞点（已收敛）**：用 Python 监控打印 `/uav_vision/detections_mapped` 内容：
+
+```
+[mon2] t=167s targets=0 mapped=1320 n=1 | bridge(False,bbox)
+```
+
+即：检测**有输出**，但
+- 类别总是 `bridge`，
+- `center_source=bbox`（未被圆环精修），
+- `map_valid=False`（投影节点拒绝未精修中心）。
+
+因此 `target_memory` 不建候选 → `/uav_vision/targets` 为空 → `no_targets`。
+放宽 `require_map_for_candidates=false`、`max_latest_tf_age_sec=2.0`、
+`min_ring_quality 0.7→0.4` 均未能改变（检测依旧是 bbox）。
+
+**新怀疑（下一步验证）**：**FAST-LIO 定位漂移**。任务里无人机按 `camera_init` 坐标飞，
+若估计漂移，机体实际并不在靶标正上方，相机看到的是别的东西（所以总是 bridge 类、
+且没有圆环可精修）。单靶测试航程短、漂移小，因此能精修、能投递。
+
+**验证方法**：飞行中同时记录
+`/gazebo/model_states`（真值）与 `/mavros/local_position/pose`（估计），算偏差。
+若偏差 >0.5 m，则先解决定位（对齐 `camera_init` 与 Gazebo 世界系、或降低飞行速度）。

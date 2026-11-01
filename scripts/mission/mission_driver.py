@@ -113,6 +113,8 @@ def main():
         pset(param_id="COM_ARM_EKF_YAW", value=ParamValue(integer=0, real=3.14))
         # 关键：px4 在解锁后若预检仍不通过会自动上锁（Disarmed by auto preflight disarming）
         pset(param_id="COM_DISARM_PRFLT", value=ParamValue(integer=0, real=-1.0))
+        # 视觉链满载时 20 Hz 设定点循环会卡顿，PX4 默认 OFFBOARD 失联超时很短
+        pset(param_id="COM_OF_LOSS_T", value=ParamValue(integer=0, real=5.0))
         pset(param_id="MPC_XY_VEL_MAX", value=ParamValue(integer=0, real=0.8))
         pset(param_id="MPC_XY_CRUISE", value=ParamValue(integer=0, real=0.8))
         pset(param_id="MPC_JERK_MAX", value=ParamValue(integer=0, real=2.0))
@@ -178,7 +180,20 @@ def main():
         sp(0.0, 0.0, cruise)
         rospy.sleep(0.5)
     rospy.loginfo("[driver] OFFBOARD=%s", offboard)
-    goto(0.0, 0.0, cruise, tol=0.35, timeout=90.0, label="takeoff")
+    ok_takeoff = False
+    for attempt in range(1, 4):
+        if goto(0.0, 0.0, cruise, tol=0.35, timeout=45.0, label=f"takeoff-{attempt}"):
+            ok_takeoff = True
+            break
+        rospy.logwarn("[driver] takeoff attempt %d failed, re-arm + re-offboard", attempt)
+        st = rospy.wait_for_message("/mavros/state",
+                                    __import__("mavros_msgs.msg", fromlist=["State"]).State,
+                                    timeout=5)
+        if not st.armed:
+            arm(True)
+        set_mode(custom_mode="OFFBOARD")
+        hold(0.0, 0.0, cruise, 2.0)
+    rospy.loginfo("[driver] takeoff ok=%s", ok_takeoff)
 
     # 等视觉链就绪（第一个靶之前），避免对准窗口还没等到视觉就超时
     rospy.loginfo("[driver] waiting for vision chain ...")

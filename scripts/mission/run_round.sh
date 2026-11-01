@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 GUI=${GUI:-true}
 VEHICLE=${VEHICLE:-iris_mid360}
+MEM_MAP=${MEM_MAP:-true}
 SEED=${1:-42}
 WANT=${2:-panzer,pillbox,tent}
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
@@ -68,7 +69,8 @@ sleep 4
     target_detector_launch_prefix:="$HOME/liftrace_sim/venv38/bin/python" \
     target_model_path:="$UAV_VISION_MODEL_PATH" target_detector_imgsz:=416 \
     map_frame:=camera_init ground_z:=0.0 enable_debug_image:=false \
-    start_legacy_compat:=true allow_latest_tf_fallback:=true max_latest_tf_age_sec:=0.30 \
+    start_legacy_compat:=true allow_latest_tf_fallback:=true max_latest_tf_age_sec:=2.0 \
+    require_map_for_candidates:=$MEM_MAP \
     > "$OUT/t8_vision.log" 2>&1 ) &
 
 
