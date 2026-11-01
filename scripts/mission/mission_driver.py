@@ -31,8 +31,19 @@ WANT_CLASSES = ("tent", "pillbox", "bridge", "panzer")
 SEARCH_LANES = [(0.8, -4.0), (0.8, 4.0), (2.6, 4.0), (2.6, -4.0),
                 (4.4, -4.0), (4.4, 4.0), (6.2, 4.0), (6.2, -4.0), (7.2, -4.0)]
 
-CORRIDOR = [(8.70, 4.30, 1.20), (9.15, 2.80, 1.00), (8.45, 1.60, 1.00),
-            (8.45, 0.20, 1.00), (9.15, -1.60, 1.00), (8.60, -3.40, 1.00)]
+CORRIDOR = [
+    (8.70, 4.30, 1.20),
+    (9.10, 3.60, 1.10),
+    (9.15, 2.80, 1.00),
+    (8.80, 2.20, 1.00),
+    (8.45, 1.60, 1.00),      # 门 A
+    (8.45, 0.90, 1.00),
+    (8.45, 0.20, 1.00),
+    (8.80, -0.70, 1.00),
+    (9.15, -1.60, 1.00),     # 门 B
+    (8.85, -2.50, 1.00),
+    (8.60, -3.40, 1.00),
+]
 EXIT_PAD = (8.75, -4.20)
 
 
@@ -104,8 +115,8 @@ def main():
         pset(param_id="COM_ARM_EKF_YAW", value=ParamValue(integer=0, real=3.14))
         pset(param_id="COM_DISARM_PRFLT", value=ParamValue(integer=0, real=-1.0))
         pset(param_id="COM_OF_LOSS_T", value=ParamValue(integer=0, real=5.0))
-        pset(param_id="MPC_XY_VEL_MAX", value=ParamValue(integer=0, real=0.8))
-        pset(param_id="MPC_XY_CRUISE", value=ParamValue(integer=0, real=0.8))
+        pset(param_id="MPC_XY_VEL_MAX", value=ParamValue(integer=0, real=0.6))
+        pset(param_id="MPC_XY_CRUISE", value=ParamValue(integer=0, real=0.6))
     except Exception as exc:  # noqa: BLE001
         rospy.logwarn("[driver] param set failed: %s", exc)
     rate = rospy.Rate(20)
@@ -124,13 +135,32 @@ def main():
             sp(x, y, z)
             rate.sleep()
 
+    def ensure_flight():
+        """掉出 OFFBOARD 或掉锁时自动恢复。"""
+        try:
+            st = rospy.wait_for_message("/mavros/state", State, timeout=3)
+        except rospy.ROSException:
+            return
+        if not st.armed:
+            rospy.logwarn("[driver] not armed -> re-arm")
+            arm(True)
+            rospy.sleep(1.0)
+        if st.mode != "OFFBOARD":
+            rospy.logwarn("[driver] mode=%s -> re-OFFBOARD", st.mode)
+            set_mode(custom_mode="OFFBOARD")
+            rospy.sleep(0.5)
+
     def goto(x, y, z, tol=0.40, timeout=120.0, label=""):
         end = rospy.Time.now() + rospy.Duration(timeout)
+        i_tick = 0
         while not rospy.is_shutdown() and rospy.Time.now() < end:
             if abs(S["x"]) > 50.0 or abs(S["y"]) > 50.0 or S["z"] < -5.0:
                 rospy.logerr("[driver] diverged (%.1f,%.1f,%.1f), abort", S["x"], S["y"], S["z"])
                 raise SystemExit(3)
             sp(x, y, z)
+            i_tick += 1
+            if i_tick % 40 == 0:
+                ensure_flight()
             d = math.sqrt((S["x"] - x) ** 2 + (S["y"] - y) ** 2 + (S["z"] - z) ** 2)
             if d < tol:
                 rospy.loginfo("[driver] %s reached (%.2f,%.2f,%.2f) d=%.2f", label, x, y, z, d)
@@ -174,7 +204,7 @@ def main():
 
     # ---------- 2. 搜索 ----------
     rospy.loginfo("[driver] 2/5 SEARCH (未知靶标位置，割草机扫描)")
-    goto(0.0, 0.0, search_z, tol=0.40, timeout=60.0, label="search-up")
+    goto(0.0, 0.0, search_z, tol=0.40, timeout=120.0, label="search-up")
     t_search = rospy.Time.now()
     for i, (lx, ly) in enumerate(SEARCH_LANES, 1):
         if len(S["found"]) >= 3:
@@ -194,38 +224,47 @@ def main():
     # ---------- 3. 逐靶投递 ----------
     dropped = []
     for idx, (cls, (tx, ty, _c)) in enumerate(found, 1):
-        rospy.loginfo("[driver] 3/5 drop %d/%d %s @ (%.2f, %.2f)", idx, len(found), cls, tx, ty)
-        if not goto(tx, ty, drop_z, tol=0.40, timeout=120.0, label=f"{cls}-approach"):
-            dropped.append(False)
-            continue
-        hold(tx, ty, drop_z, 2.0)
-        mode_pub.publish(String(data="drop_circle"))
-        ctl_pub.publish(Bool(data=True))
-        S["servo_done"] = False
-        S["ready"] = False
-        stable, okd, last = 0, False, None
-        t_a = rospy.Time.now()
-        while not rospy.is_shutdown() and (rospy.Time.now() - t_a).to_sec() < 150.0:
-            sp(tx, ty, drop_z)
-            if S["reason"] != last:
-                last = S["reason"]
-                rospy.loginfo("[driver]   %s align -> %s (targets=%d)", cls, last, S["ntgt"])
-            stable = stable + 1 if S["ready"] else 0
-            if stable >= 3:
-                for _ in range(5):
-                    servo_pub.publish(Bool(data=True))
-                    rate.sleep()
-                okd = True
-                break
-            rate.sleep()
-        if okd:
-            end = rospy.Time.now() + rospy.Duration(10.0)
-            while not rospy.is_shutdown() and rospy.Time.now() < end and not S["servo_done"]:
+        ok_all = False
+        for attempt in range(1, 4):
+            rospy.loginfo("[driver] 3/5 drop %d/%d %s @ (%.2f, %.2f) attempt %d",
+                          idx, len(found), cls, tx, ty, attempt)
+            if not goto(tx, ty, drop_z, tol=0.45, timeout=120.0, label=f"{cls}-approach{attempt}"):
+                rospy.logwarn("[driver]   %s approach failed", cls)
+                continue
+            hold(tx, ty, drop_z, 2.0)
+            mode_pub.publish(String(data="drop_circle"))
+            ctl_pub.publish(Bool(data=True))
+            S["servo_done"] = False
+            S["ready"] = False
+            stable, okd, last = 0, False, None
+            t_a = rospy.Time.now()
+            while not rospy.is_shutdown() and (rospy.Time.now() - t_a).to_sec() < 150.0:
+                sp(tx, ty, drop_z)
+                if S["reason"] != last:
+                    last = S["reason"]
+                    rospy.loginfo("[driver]   %s align -> %s (targets=%d)", cls, last, S["ntgt"])
+                stable = stable + 1 if S["ready"] else 0
+                if stable >= 3:
+                    for _ in range(5):
+                        servo_pub.publish(Bool(data=True))
+                        rate.sleep()
+                    okd = True
+                    break
                 rate.sleep()
-        dropped.append(bool(okd and S["servo_done"]))
-        rospy.loginfo("[driver] %s dropped=%s servo=%s", cls, okd, S["servo_done"])
-        ctl_pub.publish(Bool(data=False))
-        mode_pub.publish(String(data="disabled"))
+            if okd:
+                endw = rospy.Time.now() + rospy.Duration(10.0)
+                while not rospy.is_shutdown() and rospy.Time.now() < endw and not S["servo_done"]:
+                    rate.sleep()
+            ok_all = bool(okd and S["servo_done"])
+            rospy.loginfo("[driver]   %s attempt %d dropped=%s servo=%s",
+                          cls, attempt, okd, S["servo_done"])
+            ctl_pub.publish(Bool(data=False))
+            mode_pub.publish(String(data="disabled"))
+            if ok_all:
+                break
+            # 重试前挪开一点，重新观察（避免停在同一点反复 stale）
+            goto(tx + 0.8, ty + 0.8, drop_z, tol=0.45, timeout=60.0, label=f"{cls}-reset{attempt}")
+        dropped.append(ok_all)
 
     # ---------- 4. 走廊 ----------
     rospy.loginfo("[driver] 4/5 corridor")
