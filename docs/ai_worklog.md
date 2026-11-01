@@ -549,3 +549,30 @@ GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_map
 
 **备份**：`~/backups/liftrace_sim_work_1101_1618.tgz`、`2027autofly_1101_1618.tgz`、
 `vision_cfg_1101_16xx/`（target_memory.yaml / drop_aligner.yaml / phase_d.launch 原件）。
+
+---
+
+## 19. 阶段十九：投递链路的第二轮定位（11-01 晚）
+
+**已修复并验证**
+1. `phase_d.launch` 的 `require_complete_detection_sources` 参数化（默认 false）——生效，警告归零。
+2. **PX4 解锁后被自动上锁**（`Disarmed by auto preflight disarming`，原因 `Yaw estimate error`）：
+   无磁罗盘机架（`SYS_HAS_MAG=0`）航向只靠视觉，解锁瞬间姿态放开就会触发。
+   处理：`COM_DISARM_PRFLT=-1` 关闭 preflight 自动上锁 + 解锁后 2 秒复查并补解锁；
+   `odom_to_vision` 的姿态锁定延长到离地（z<0.30）。
+   结果：`armed=True` → `OFFBOARD=True` → `takeoff reached` 稳定通过。
+3. `odom_to_tf` 去重条件由 `<=` 改为 `==`，避免 FAST-LIO 时间戳回跳导致 TF 永久停发。
+
+**已验证可用的一条路径**：`mission_driver.py "1.66,4.02" 1.5`（单靶）时，
+监控显示 `targets=2` → `offset_exceeds_limit` → `ready=True reason=evidence_valid`。
+
+**仍存在的问题**：三靶整回合里 `/uav_vision/detections_mapped` 有 4–5 Hz 正常输出，
+但 `/uav_vision/targets` 全程为 0（1068 帧），aligner 一直 `no_targets`。
+记忆节点没有任何告警，因此怀疑所有 mapped 检测的 `map_valid=False`
+（投影失败），又被 `require_map_for_candidates=True` 静默丢弃。
+
+**下一步（很具体）**：
+1. 在整回合的对准窗口里 `rostopic echo -n1 /uav_vision/detections_mapped`，
+   确认 `map_valid` 是否为 False、`center_source` 是否为空；
+2. 若确为 False，查投影节点的 TF 查询失败原因（回合里 TF_REPEATED 警告约 3900 条）；
+3. 临时验证手段：`require_map_for_candidates:=false` 跑一轮，看是否能投递。

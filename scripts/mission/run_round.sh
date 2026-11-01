@@ -7,6 +7,7 @@ set +u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 GUI=${GUI:-true}
+VEHICLE=${VEHICLE:-iris_mid360}
 SEED=${1:-42}
 WANT=${2:-panzer,pillbox,tent}
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
@@ -46,7 +47,7 @@ chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
 roslaunch patrol_control patrol_world.launch \
-  world:="$WORLD" gui:=$GUI x:=0.0 y:=0.0 z:=0.06 > "$OUT/t1_world.log" 2>&1 &
+  world:="$WORLD" gui:=$GUI x:=0.0 y:=0.0 z:=0.06 vehicle:=$VEHICLE > "$OUT/t1_world.log" 2>&1 &
 T1=$!
 sleep 40
 
@@ -60,7 +61,7 @@ python3 /home/lihai/liftrace_sim/odom_to_tf.py > "$OUT/t6_tf.log" 2>&1 &
 python3 /home/lihai/liftrace_sim/odom_to_vision.py > "$OUT/t7_visionpose.log" 2>&1 &
 sleep 4
 
-( sleep 120; source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1; \
+( source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1; \
   roslaunch uav_vision phase_d.launch \
     image_topic:=/downward_camera/image_raw \
     camera_info_topic:=/downward_camera/camera_info \
@@ -70,6 +71,8 @@ sleep 4
     start_legacy_compat:=true allow_latest_tf_fallback:=true max_latest_tf_age_sec:=0.30 \
     > "$OUT/t8_vision.log" 2>&1 ) &
 
+
+sleep 20
 
 echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
 python3 -u /home/lihai/liftrace_sim/mission_driver.py "$TARGETS" 1.5 "8.75,-4.20" \

@@ -111,6 +111,8 @@ def main():
     try:
         pset = rospy.ServiceProxy("/mavros/param/set", ParamSet)
         pset(param_id="COM_ARM_EKF_YAW", value=ParamValue(integer=0, real=3.14))
+        # 关键：px4 在解锁后若预检仍不通过会自动上锁（Disarmed by auto preflight disarming）
+        pset(param_id="COM_DISARM_PRFLT", value=ParamValue(integer=0, real=-1.0))
         pset(param_id="MPC_XY_VEL_MAX", value=ParamValue(integer=0, real=0.8))
         pset(param_id="MPC_XY_CRUISE", value=ParamValue(integer=0, real=0.8))
         pset(param_id="MPC_JERK_MAX", value=ParamValue(integer=0, real=2.0))
@@ -159,6 +161,15 @@ def main():
         sp(0.0, 0.0, cruise)
         rospy.sleep(1.0)
     rospy.loginfo("[driver] armed=%s (%.0fs)", armed, (rospy.Time.now() - t0).to_sec())
+
+    # 等 2 秒确认没被自动上锁；掉了就补一次
+    for _ in range(3):
+        rospy.sleep(2.0)
+        st = rospy.wait_for_message("/mavros/state", __import__("mavros_msgs.msg", fromlist=["State"]).State, timeout=5)
+        if st.armed:
+            break
+        rospy.logwarn("[driver] auto-disarmed, re-arm")
+        arm(True)
     offboard = False
     for _ in range(60):
         if set_mode(custom_mode="OFFBOARD").mode_sent:

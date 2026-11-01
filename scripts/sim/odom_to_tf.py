@@ -21,7 +21,9 @@ class OdomToTf:
     def cb(self, msg):
         # FAST-LIO 偶尔同一时间戳发两帧，重复 TF 会刷 TF_REPEATED_DATA 警告
         stamp = msg.header.stamp.to_nsec()
-        if self.last_stamp is not None and stamp <= self.last_stamp:
+        # 只丢完全重复的时间戳；FAST-LIO 重置后时间戳可能回跳，
+        # 若用 <= 判断会永久停止发 TF，导致视觉投影失效。
+        if self.last_stamp is not None and stamp == self.last_stamp:
             self.skipped += 1
             if self.skipped % 200 == 1:
                 rospy.logdebug("odom_to_tf: skip duplicate stamp (%d skipped)", self.skipped)
