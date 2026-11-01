@@ -1,53 +1,53 @@
 #!/usr/bin/env bash
-# 起仿真 + 跑完整比赛航线，任务结束后【窗口保留】，Ctrl-C 才清理退出
-# 想边看飞机飞边操作，用这个；只看不飞用 321_gui_keep.sh；跑完自动清理用 301_full_round.sh
+# 新版比赛回合：随机场景 -> 起飞 -> 三靶投递 -> 走廊(北口进) -> 走廊尽头 H 板降落
+# 用法: bash 365_round_v2.sh [seed] [targets]
+#   seed    默认 42
+#   targets 默认 panzer,pillbox,tent
 set +u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-REPO=/home/lihai/liftrace_sim/liftrace-visionwork
+SEED=${1:-42}
+WANT=${2:-panzer,pillbox,tent}
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
-OUT=/home/lihai/liftrace_sim/out/fly_$(date +%m%d_%H%M)
+SCENES=/home/lihai/liftrace_sim/scenes
+OUT=/home/lihai/liftrace_sim/out/round2_$(date +%m%d_%H%M)
 mkdir -p "$OUT"
 
-echo "== T0 开工自检 =="
+echo "== T0 场景生成 (seed=$SEED) =="
+/home/lihai/liftrace_sim/venv38/bin/python \
+  "$ROOT/scripts/tools/scene_gen.py" --seed "$SEED" --out "$SCENES" \
+  | tee "$OUT/scene.log"
+WORLD="$SCENES/scene_$SEED.world"
+META="$SCENES/scene_$SEED.json"
+[ -f "$WORLD" ] || { echo "场景生成失败"; exit 1; }
+
+# 从 JSON 里取目标坐标（顺序按 WANT）
+TARGETS=$(/usr/bin/python3 - "$META" "$WANT" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1]))
+want = [w.strip() for w in sys.argv[2].split(",") if w.strip()]
+pos = {t["name"]: (t["x"], t["y"]) for t in meta["targets"]}
+sel = [w for w in want if w in pos] or list(pos)[:3]
+print(";".join("%.2f,%.2f" % pos[n] for n in sel))
+PY
+)
+echo "  投递目标: $TARGETS"
+[ -n "$TARGETS" ] || { echo "取目标坐标失败"; exit 1; }
+
+echo "== T1 自检 + 清理 =="
 bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
 source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
-echo "  DISPLAY=$DISPLAY  world=$(basename "$FW/worlds/field_with_targets.world")"
 
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/300_mission_driver_v3.py /home/lihai/liftrace_sim/mission_driver.py
+cp -f "$ROOT/scripts/mission/mission_driver.py" /home/lihai/liftrace_sim/mission_driver.py
 cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
 cp -f "$ROOT/scripts/sim/odom_to_vision.py" /home/lihai/liftrace_sim/odom_to_vision.py
 chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
-cleanup() {
-  echo
-  echo "== 收到 Ctrl-C，清理仿真进程 =="
-  kill -INT $T1 2>/dev/null
-  sleep 3
-  for n in gzserver gzclient rosmaster rosout roslaunch; do pkill -x "$n" 2>/dev/null; done
-  pkill -x px4 2>/dev/null
-  pkill -f fastlio_mapping 2>/dev/null
-  pkill -f livox_bridge 2>/dev/null
-  pkill -f odom_to_ 2>/dev/null
-  pkill -f camera_tf 2>/dev/null
-  pkill -f mock_servo 2>/dev/null
-  pkill -f mission_driver 2>/dev/null
-  pkill -f target_detector 2>/dev/null
-  pkill -f detect_compat_bridge 2>/dev/null
-  echo "已清理，日志在 $OUT"
-  exit 0
-}
-trap cleanup INT TERM
-
-echo "== T1 Gazebo(GUI) + PX4 + MAVROS + 下视机架 =="
+echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
 roslaunch patrol_control patrol_world.launch \
-  world:="$FW/worlds/field_with_targets.world" \
-  gui:=true x:=0.0 y:=0.0 z:=0.06 px4_root:="$HOME/liftrace_sim/PX4-Autopilot" \
-  astra_sim_lib:="$HOME/AstraDroneOpen/simulation/sim_workspace/devel/lib" \
-  > "$OUT/t1_world.log" 2>&1 &
+  world:="$WORLD" gui:=true x:=0.0 y:=0.0 z:=0.06 > "$OUT/t1_world.log" 2>&1 &
 T1=$!
 sleep 40
-echo "  gzclient: $(pgrep -x gzclient > /dev/null && echo running || echo down)"
 
 python3 /home/lihai/liftrace_sim/camera_tf.py > "$OUT/t2_camtf.log" 2>&1 &
 python3 /home/lihai/liftrace_sim/livox_bridge.py > "$OUT/t3_bridge.log" 2>&1 &
@@ -59,7 +59,6 @@ python3 /home/lihai/liftrace_sim/odom_to_tf.py > "$OUT/t6_tf.log" 2>&1 &
 python3 /home/lihai/liftrace_sim/odom_to_vision.py > "$OUT/t7_visionpose.log" 2>&1 &
 sleep 4
 
-# 视觉链延后启动（否则解锁会被 EKF 航向检查卡住）
 ( sleep 120; source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1; \
   roslaunch uav_vision phase_d.launch \
     image_topic:=/downward_camera/image_raw \
@@ -70,18 +69,48 @@ sleep 4
     start_legacy_compat:=true allow_latest_tf_fallback:=true max_latest_tf_age_sec:=0.30 \
     > "$OUT/t8_vision.log" 2>&1 ) &
 
-echo
-echo "======================================================"
-echo " 现在开始飞：走廊 → 三靶投递 → H 视觉降落"
-echo "   Gazebo 窗口里可以直接看；日志 $OUT/t9_driver.log"
-echo "======================================================"
-python3 -u /home/lihai/liftrace_sim/mission_driver.py \
-  "7.05,-4.13;4.64,-3.30;4.90,-0.71" 1.5 corridor 2>&1 | tee "$OUT/t9_driver.log"
+
+echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
+python3 -u /home/lihai/liftrace_sim/mission_driver.py "$TARGETS" 1.5 "8.75,-4.20" \
+  > "$OUT/t9_driver.log" 2>&1 &
+T9=$!
+
+WID=$(DISPLAY=:0 xwininfo -root -tree 2>/dev/null | grep -oE '0x[0-9a-f]+ "Gazebo"' | head -1 | cut -d' ' -f1)
+for i in $(seq 1 45); do
+  sleep 20
+  if ! kill -0 $T9 2>/dev/null; then echo "  驱动结束"; break; fi
+  if ! timeout 5 rostopic list > /dev/null 2>&1; then
+    echo "[watchdog] rosmaster 失联"; break
+  fi
+  printf "[%3ds] " $((i*20)) >> "$OUT/pos.log"
+  timeout 5 rostopic echo -n 1 /mavros/local_position/pose/pose/position 2>/dev/null | tr -d '\n ' >> "$OUT/pos.log"
+  echo >> "$OUT/pos.log"
+  if [ "$i" = "8" ] || [ "$i" = "16" ] || [ "$i" = "24" ]; then
+    [ -n "$WID" ] && DISPLAY=:0 import -window "$WID" "$OUT/shot_$i.png" 2>/dev/null
+  fi
+done
+
+echo "== 驱动日志 =="
+cat "$OUT/t9_driver.log"
+echo "== 舵机 =="
+tail -4 "$OUT/t4_servo.log"
+mkdir -p "$ROOT/docs/screenshots"; cp -f "$OUT"/shot_*.png "$ROOT/docs/screenshots/" 2>/dev/null || true
 
 echo
 echo "======================================================"
-echo " 任务结束。仿真仍然开着，可以继续观察/手动操作"
-echo "   想看飞行结果：tail -40 $OUT/t9_driver.log"
-echo "   按 Ctrl-C 结束仿真并清理"
+echo " 任务结束，仿真保留。日志: $OUT"
+echo " 按 Ctrl-C 结束仿真并清理"
 echo "======================================================"
+cleanup() {
+  echo; echo "== 清理 =="
+  kill -INT $T1 2>/dev/null; sleep 3
+  for n in gzserver gzclient rosmaster rosout roslaunch; do pkill -x "$n" 2>/dev/null; done
+  pkill -x px4 2>/dev/null
+  pkill -f fastlio_mapping 2>/dev/null; pkill -f livox_bridge 2>/dev/null
+  pkill -f odom_to_ 2>/dev/null; pkill -f camera_tf 2>/dev/null
+  pkill -f mock_servo 2>/dev/null; pkill -f target_detector 2>/dev/null
+  pkill -f detect_compat_bridge 2>/dev/null; pkill -f mission_driver 2>/dev/null
+  echo "已清理"; exit 0
+}
+trap cleanup INT TERM
 while true; do sleep 5; done

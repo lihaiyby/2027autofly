@@ -94,7 +94,7 @@ echo "== 驱动日志 =="
 cat "$OUT/t9_driver.log"
 echo "== 舵机 =="
 tail -4 "$OUT/t4_servo.log"
-cp -f "$OUT"/shot_*.png /mnt/d/deepseek-workspace/liftrace_sim_work/out/ 2>/dev/null
+mkdir -p "$ROOT/docs/screenshots"; cp -f "$OUT"/shot_*.png "$ROOT/docs/screenshots/" 2>/dev/null || true
 
 kill -INT $T1 2>/dev/null; sleep 4
 for n in gzserver gzclient rosmaster rosout roslaunch; do pkill -x "$n" 2>/dev/null; done
