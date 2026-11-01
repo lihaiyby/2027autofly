@@ -612,3 +612,35 @@ GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_map
 **验证方法**：飞行中同时记录
 `/gazebo/model_states`（真值）与 `/mavros/local_position/pose`（估计），算偏差。
 若偏差 >0.5 m，则先解决定位（对齐 `camera_init` 与 Gazebo 世界系、或降低飞行速度）。
+
+---
+
+## 21. 阶段二十一：投递失败根因确认——**对准高度太低**（11-01 22:10）
+
+**决定性对照实验**（同一位置 panzer(1.66,4.02)，只改高度）：
+
+| 悬停高度 | `/uav_vision/targets` | `map_valid` | `center_source` | drop_ready |
+|---|---|---|---|---|
+| 1.5 m | 0（多数时候） | False | bbox | `no_targets` |
+| **2.3 m** | **2** | **True** | **circle_geometry** | **ready=True / evidence_valid** |
+
+原因：下视相机 640×480、约 60° 视场，1.5 m 高时地面覆盖只有约 1.7×1.3 m；
+靶标圆环直径约 1.5 m，正好被画面边缘裁掉，`circle_detector` 的
+`reject_border_clipped` 直接拒收 → 只保留 YOLO 的 bbox 中心 →
+投影节点因"未精修"判 `map_valid=False` → `target_memory`（require_map=true）不建候选
+→ `/uav_vision/targets` 空 → `no_targets`。
+
+这也解释了为什么发布包里的评估基线一直用 **2.5 m** 相机高度、且 5/5 通过。
+
+**已实施**
+- `mission_driver.py`：投递高度独立为 `drop_z`（默认 2.3 m），到达靶标后先爬升再对准；
+  对准窗口 90→240 秒；先等 `targets>0` 再计时；新增起飞重试与 `COM_OF_LOSS_T`/`COM_DISARM_PRFLT`。
+- `drop_aligner.yaml`：`max_offset_px` 120→250（2.3 m 下约 1.0 m）；
+  `target_center` 320/240（640×480 相机的真实中心）。
+- `phase_d.launch`：`require_complete_detection_sources` 参数化（默认 false）。
+
+**仍待解决**
+- 整回合里第 1 个靶标经常出现 `targets=0`（120 s 内不确认），而同一位置
+  用定点脚本（hover_at + 单独发 align_mode）却能确认。差异在驱动的飞行/对准时序，
+  尚未定位；第 2 个靶标已能确认（`targets=2`），但对准在
+  `offset_exceeds_limit` 与 `stale_observation` 之间摆动，未能稳定进入 `evidence_valid`。

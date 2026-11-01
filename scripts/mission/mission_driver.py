@@ -22,9 +22,9 @@ from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import ParamValue, StatusText
 from mavros_msgs.srv import CommandBool, ParamSet, SetMode
 from std_msgs.msg import Bool, String
-from uav_vision.msg import DropReady
+from uav_vision.msg import DropReady, TargetCandidateArray
 
-S = {"x": 0.0, "y": 0.0, "z": 0.0, "mark": None, "mark_t": None,
+S = {"x": 0.0, "y": 0.0, "z": 0.0, "mark": None, "mark_t": None, "ntgt": 0,
      "land": None, "land_t": None, "ready": False, "reason": "",
      "servo_done": False}
 
@@ -52,6 +52,10 @@ def mark_cb(m):
 def land_cb(m):
     S["land"] = (m.pose.position.x, m.pose.position.y)
     S["land_t"] = rospy.Time.now()
+
+
+def targets_cb(m):
+    S["ntgt"] = len(m.targets)
 
 
 def ready_cb(m):
@@ -85,6 +89,7 @@ def main():
     rospy.init_node("liftrace_mission_driver")
     targets = parse_targets(sys.argv[1] if len(sys.argv) > 1 else "")
     cruise = float(sys.argv[2]) if len(sys.argv) > 2 else 1.5
+    drop_z = float(sys.argv[4]) if len(sys.argv) > 4 else 2.3
     if len(sys.argv) > 3:
         ex, ey = sys.argv[3].split(",")
         exit_xy = (float(ex), float(ey))
@@ -95,10 +100,12 @@ def main():
     mode_pub = rospy.Publisher("/uav_vision/align_mode", String, queue_size=2, latch=True)
     servo_pub = rospy.Publisher("/detect/servo_status", Bool, queue_size=2)
     land_pub = rospy.Publisher("/detect/landing_control", Bool, queue_size=2, latch=True)
+    ctl_pub = rospy.Publisher("/detect/control", Bool, queue_size=2, latch=True)
 
     rospy.Subscriber("/mavros/local_position/pose", PoseStamped, pose_cb)
     rospy.Subscriber("/detect/waypoint_mark_point", PoseStamped, mark_cb)
     rospy.Subscriber("/detect/land_mark_point", PoseStamped, land_cb)
+    rospy.Subscriber("/uav_vision/targets", TargetCandidateArray, targets_cb)
     rospy.Subscriber("/uav_vision/drop_ready", DropReady, ready_cb)
     rospy.Subscriber("/detect/servo_complete", Bool, servo_cb)
     rospy.Subscriber("/mavros/statustext/recv", StatusText, statustext_cb)
@@ -215,29 +222,36 @@ def main():
         if not goto(tx, ty, cruise, tol=0.40, timeout=180.0, label=f"target{idx}"):
             dropped.append(False)
             continue
-        hold(tx, ty, cruise, 1.0)
+        # 抬高到投递高度：太低会让圆环被画面裁掉，无法精修
+        goto(tx, ty, drop_z, tol=0.30, timeout=60.0, label=f"target{idx}-up")
+        hold(tx, ty, drop_z, 1.0)
         mode_pub.publish(String(data="drop_circle"))
+        ctl_pub.publish(Bool(data=True))     # 兼容桥据此发 /detect/waypoint_mark_point
         S["servo_done"] = False
         S["ready"] = False
         tgt = [tx, ty]
         stable, ok = 0, False
+        # 先等视觉记忆确认目标（最多 120 秒），再开始对准计时
+        t_wait = rospy.Time.now()
+        while not rospy.is_shutdown() and (rospy.Time.now() - t_wait).to_sec() < 120.0:
+            if S["ntgt"] > 0:
+                break
+            sp(tx, ty, drop_z)
+            rate.sleep()
+        rospy.loginfo("[driver] target %d: targets=%d after %.0fs",
+                      idx, S["ntgt"], (rospy.Time.now() - t_wait).to_sec())
         t_align = rospy.Time.now()
         last_reason = None
         i_tick = 0
-        while not rospy.is_shutdown() and (rospy.Time.now() - t_align).to_sec() < 90.0:
+        while not rospy.is_shutdown() and (rospy.Time.now() - t_align).to_sec() < 240.0:
             i_tick += 1
             if i_tick % 40 == 0:                     # 每 2 秒重申一次对准模式
                 mode_pub.publish(String(data="drop_circle"))
             if S["reason"] != last_reason:
                 last_reason = S["reason"]
                 rospy.loginfo("[driver] target %d align reason -> %s", idx, last_reason)
-            mark, mt = S["mark"], S["mark_t"]
-            age = 9.9 if mt is None else (rospy.Time.now() - mt).to_sec()
-            if mark is not None and age < 1.0:
-                dx, dy = mark[0] - tx, mark[1] - ty
-                if dx * dx + dy * dy <= 1.5 * 1.5:
-                    tgt[0], tgt[1] = mark
-            sp(tgt[0], tgt[1], cruise)
+            # 不再追 mark：悬停在指令点，靠放宽的对准门限判定（避免来回摆）
+            sp(tgt[0], tgt[1], drop_z)
             stable = stable + 1 if S["ready"] else 0
             if stable >= 3:
                 for _ in range(5):
@@ -253,6 +267,7 @@ def main():
         dropped.append(bool(ok and S["servo_done"]))
         rospy.loginfo("[driver] target %d dropped=%s servo=%s reason=%s",
                       idx, ok, S["servo_done"], S["reason"])
+        ctl_pub.publish(Bool(data=False))
         mode_pub.publish(String(data="disabled"))
 
     # ---------- 3. 走廊（北口进 → 蛇形 → 尽头） ----------
