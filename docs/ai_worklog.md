@@ -520,3 +520,32 @@ Error in XmlRpcClient::writeRequest: write error (Connection refused).   ×N
 ---
 
 ## 18. 收尾
+---
+
+## 18. 阶段十八：随机场景投递失败的根因（11-01）
+
+**现象**：随机场景里三个靶全部 `drop_ready reason=no_targets`，但同一位置定点悬停时
+视觉链完全正常（`panzer` state=2、`map_valid: True`、detections 30 Hz、mapped 10 Hz、
+`drop_ready ready=True reason=evidence_valid`）。
+
+**根因**：`uav_vision/launch/phase_d.launch` 把 `target_memory` 的
+`require_complete_detection_sources` 硬编码成 `true`（配置文件里其实是 false）。
+该开关要求同一帧里 **四路检测源全部到齐**（target_detector / circle / cross / landing）。
+CPU 上 YOLO 只有 1–3 fps，融合窗口（flush_delay 0.8 s）内常常只有 circle+cross 到位，
+于是每帧都被判 `ignore incomplete fusion frame` → 不建候选 → `/uav_vision/targets` 空
+→ aligner 报 `no_targets`。
+
+GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_mapped` 降到 0.1–0.2 Hz）。
+
+**修复**：
+1. `phase_d.launch` 把该开关参数化：`require_complete_sources`（默认 **false**），
+   `require_map_for_candidates` 也可从 launch 传。改完 `ignore incomplete` 警告归零。
+2. `odom_to_vision.py`：姿态锁定从"解锁前"延长到"离地前"（`z < 0.30` 一直发单位四元数）。
+   原因：PX4 日志出现 `Preflight Fail: Yaw estimate error` → `Disarmed by auto preflight disarming`，
+   解锁瞬间放开姿态会被自动上锁，导致起飞超时。
+
+**验证状态**：修复 1 已确认生效（日志 `require_complete_detection_sources=False`、警告 0 条）；
+完整回合的投递结果待下一轮跑通确认（上一轮被 PX4 自动上锁打断）。
+
+**备份**：`~/backups/liftrace_sim_work_1101_1618.tgz`、`2027autofly_1101_1618.tgz`、
+`vision_cfg_1101_16xx/`（target_memory.yaml / drop_aligner.yaml / phase_d.launch 原件）。
