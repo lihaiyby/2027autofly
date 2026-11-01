@@ -2,13 +2,14 @@
 # 只启动仿真并在前台保持：Gazebo 窗口一直开着，Ctrl-C 才退出
 # 用法: bash 321_gui_keep.sh [world路径]
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 WORLD=${1:-/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008/worlds/field_with_targets.world}
 OUT=/home/lihai/liftrace_sim/out/gui_keep
 mkdir -p "$OUT"
 
 echo "== 自检 =="
-bash /mnt/d/deepseek-workspace/liftrace_sim_work/312_cleanup_all.sh > /dev/null 2>&1
+bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
 source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
 echo "  DISPLAY=$DISPLAY"
 timeout 5 xdpyinfo -display "$DISPLAY" > /dev/null 2>&1 && echo "  X11 OK" || echo "  [警告] X11 不可用，窗口不会出现"

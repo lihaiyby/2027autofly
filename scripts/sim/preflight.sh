@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # 开工前自检：清残留、查内存、查世界文件、确认 ROS 可启动
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FAIL=0
 
 echo "== 1. 清理残留进程 =="
-bash /mnt/d/deepseek-workspace/liftrace_sim_work/312_cleanup_all.sh 2>&1 | tail -3
+bash "$ROOT/scripts/sim/cleanup_all.sh" 2>&1 | tail -3
 
 echo "== 2. 内存 =="
 free -m | awk 'NR==2{printf "  total=%dMB used=%dMB available=%dMB\n", $2, $3, $7}'

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 验证文档里"终端 1"的命令（不带额外参数，靠 sim_env.sh 的 PX4_ROOT 等）能否起仿真
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT=/home/lihai/liftrace_sim/out/doc_check
 mkdir -p "$OUT"
 for n in gzserver gzclient rosmaster rosout roslaunch; do pkill -x "$n" 2>/dev/null; done

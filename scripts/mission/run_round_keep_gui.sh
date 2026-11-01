@@ -2,6 +2,7 @@
 # 起仿真 + 跑完整比赛航线，任务结束后【窗口保留】，Ctrl-C 才清理退出
 # 想边看飞机飞边操作，用这个；只看不飞用 321_gui_keep.sh；跑完自动清理用 301_full_round.sh
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 REPO=/home/lihai/liftrace_sim/liftrace-visionwork
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
@@ -9,13 +10,13 @@ OUT=/home/lihai/liftrace_sim/out/fly_$(date +%m%d_%H%M)
 mkdir -p "$OUT"
 
 echo "== T0 开工自检 =="
-bash /mnt/d/deepseek-workspace/liftrace_sim_work/312_cleanup_all.sh > /dev/null 2>&1
+bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
 source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
 echo "  DISPLAY=$DISPLAY  world=$(basename "$FW/worlds/field_with_targets.world")"
 
 cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/300_mission_driver_v3.py /home/lihai/liftrace_sim/mission_driver.py
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/314_odom_to_tf.py /home/lihai/liftrace_sim/odom_to_tf.py
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/274_odom_to_vision.py /home/lihai/liftrace_sim/odom_to_vision.py
+cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
+cp -f "$ROOT/scripts/sim/odom_to_vision.py" /home/lihai/liftrace_sim/odom_to_vision.py
 chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 cleanup() {

@@ -5,6 +5,7 @@
 #   bash 333_map_view.sh fly      # 起飞绕方形，让点云铺开（推荐）
 # 结束：Ctrl-C（会清理所有进程）
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 MODE=${1:-hover}
 OUT=/home/lihai/liftrace_sim/out/mapview_$(date +%H%M)

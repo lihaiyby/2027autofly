@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPO=/home/lihai/liftrace_sim/liftrace-visionwork
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
 OUT=/home/lihai/liftrace_sim/out/round_$(date +%m%d_%H%M)
 rm -rf "$OUT"; mkdir -p "$OUT"
 cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/300_mission_driver_v3.py /home/lihai/liftrace_sim/mission_driver.py
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/314_odom_to_tf.py /home/lihai/liftrace_sim/odom_to_tf.py
+cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
 chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 echo "== T0 开工自检 =="
-bash /mnt/d/deepseek-workspace/liftrace_sim_work/313_preflight.sh > "$OUT/t0_preflight.log" 2>&1
+bash "$ROOT/scripts/sim/preflight.sh" > "$OUT/t0_preflight.log" 2>&1
 tail -3 "$OUT/t0_preflight.log"
 
 for n in gzserver gzclient rosmaster rosout roslaunch; do pkill -x "$n" 2>/dev/null; done

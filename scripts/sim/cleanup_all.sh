@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 清理所有仿真相关进程（含 16 小时前挂掉的残留）
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 echo "== 清理前 =="
 pgrep -a -x gzserver | head -3
 pgrep -a -x px4 | head -3

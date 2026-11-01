@@ -4,6 +4,7 @@
 #   seed    默认 42
 #   targets 默认 panzer,pillbox,tent
 set +u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 SEED=${1:-42}
 WANT=${2:-panzer,pillbox,tent}
@@ -14,7 +15,7 @@ mkdir -p "$OUT"
 
 echo "== T0 场景生成 (seed=$SEED) =="
 /home/lihai/liftrace_sim/venv38/bin/python \
-  /mnt/d/deepseek-workspace/liftrace_sim_work/360_scene_gen.py --seed "$SEED" --out "$SCENES" \
+  "$ROOT/scripts/tools/scene_gen.py" --seed "$SEED" --out "$SCENES" \
   | tee "$OUT/scene.log"
 WORLD="$SCENES/scene_$SEED.world"
 META="$SCENES/scene_$SEED.json"
@@ -34,12 +35,12 @@ echo "  投递目标: $TARGETS"
 [ -n "$TARGETS" ] || { echo "取目标坐标失败"; exit 1; }
 
 echo "== T1 自检 + 清理 =="
-bash /mnt/d/deepseek-workspace/liftrace_sim_work/312_cleanup_all.sh > /dev/null 2>&1
+bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
 source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
 
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/364_mission_driver_v4.py /home/lihai/liftrace_sim/mission_driver.py
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/314_odom_to_tf.py /home/lihai/liftrace_sim/odom_to_tf.py
-cp -f /mnt/d/deepseek-workspace/liftrace_sim_work/274_odom_to_vision.py /home/lihai/liftrace_sim/odom_to_vision.py
+cp -f "$ROOT/scripts/mission/mission_driver.py" /home/lihai/liftrace_sim/mission_driver.py
+cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
+cp -f "$ROOT/scripts/sim/odom_to_vision.py" /home/lihai/liftrace_sim/odom_to_vision.py
 chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
