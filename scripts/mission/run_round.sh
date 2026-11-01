@@ -6,6 +6,7 @@
 set +u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+GUI=${GUI:-true}
 SEED=${1:-42}
 WANT=${2:-panzer,pillbox,tent}
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
@@ -45,7 +46,7 @@ chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
 roslaunch patrol_control patrol_world.launch \
-  world:="$WORLD" gui:=true x:=0.0 y:=0.0 z:=0.06 > "$OUT/t1_world.log" 2>&1 &
+  world:="$WORLD" gui:=$GUI x:=0.0 y:=0.0 z:=0.06 > "$OUT/t1_world.log" 2>&1 &
 T1=$!
 sleep 40
 
