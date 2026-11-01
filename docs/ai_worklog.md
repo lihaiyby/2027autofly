@@ -644,3 +644,32 @@ GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_map
   用定点脚本（hover_at + 单独发 align_mode）却能确认。差异在驱动的飞行/对准时序，
   尚未定位；第 2 个靶标已能确认（`targets=2`），但对准在
   `offset_exceeds_limit` 与 `stale_observation` 之间摆动，未能稳定进入 `evidence_valid`。
+
+---
+
+## 22. 阶段二十二：搜索式完整任务跑通（11-01 22:41）✅
+
+**关键改动**：起飞时**不知道靶标位置**，先搜索再投递（`mission_driver.py` v5）。
+
+流程：
+1. 起飞到 1.5 m，等视觉链就绪
+2. 爬到 `search_z=2.4 m`，按 9 段割草机航线扫描（x 0.8→7.2，y ±4.0）
+3. 从 `/uav_vision/targets` 读取**已确认（state≥2）且地图有效**的靶标地图坐标，
+   按类别去重，找齐 3 个（tent/pillbox/bridge/panzer，排除 red_cross）
+4. 逐个飞到发现的坐标 → 2.3 m 对准 → `drop_ready` 连续 3 帧 → 投递
+5. 走廊 6 段 → 爬升越墙 → 尽头 H 板视觉降落
+
+**实测（seed 42，随机场景）**：
+```
+[driver] 2/5 SEARCH
+[driver]   found={'pillbox': (4.01,-3.09), 'tent': (4.98,-1.74), 'bridge': (3.97,2.64)}
+[driver] 搜索完成 42s，发现 3 个目标
+[driver] pillbox dropped=True servo=True
+[driver] bridge  dropped=True servo=True
+[driver] tent    dropped=True servo=True
+[driver] corridor-1..6 全部到达
+[driver] DONE found=3 drops=[True,True,True] final=(8.76,-4.18,0.15)
+```
+
+**注意**：发现的坐标与场景真值有 1–2 m 偏差（LIO 漂移 + 圆环中心投影），
+但 2.3 m 高度下视场足够大，仍能对准投递。后续若要精确落点，需标定投影偏移。

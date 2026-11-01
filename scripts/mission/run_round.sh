@@ -77,7 +77,7 @@ sleep 4
 sleep 20
 
 echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
-python3 -u /home/lihai/liftrace_sim/mission_driver.py "$TARGETS" 1.5 "8.75,-4.20" \
+python3 -u /home/lihai/liftrace_sim/mission_driver.py 2.4 2.3 \
   > "$OUT/t9_driver.log" 2>&1 &
 T9=$!
 
