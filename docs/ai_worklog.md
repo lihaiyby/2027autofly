@@ -797,3 +797,47 @@ GUI 开着、或视觉链与飞行同时跑时更严重（实测 `detections_map
 投递时 `drop_aligner` 绝大多数时间停在 **`stale_observation`**，
 进不到 `evidence_valid`。可能与 RTF≈0.4（视觉帧率相对仿真时间偏低）有关，
 需要单独确认 `drop_aligner` 的 stale 阈值用的是墙钟还是仿真时钟。
+
+---
+
+## 26. 阶段二十六：投递 100% 成功 —— 根因是 `target_max_age`（11-02 21:07）✅
+
+### 根因
+
+`drop_aligner` 的 `target_max_age` 默认 **0.5 秒**（仿真时钟），而目标从成像到进入对准器
+要经过 YOLO 推理 → `detection_fusion`（`flush_delay: 0.80`）→ `target_refiner` →
+`target_memory`，实际延迟**必然超过 0.5 秒**。
+
+因此**每一帧都被判为 `stale_observation`**，永远进不到 `evidence_valid`——
+这正是过去几天投递反复失败、且"偶尔又能成功"的原因（时序卡在边界时才有帧侥幸通过）。
+
+### 修复
+
+```yaml
+# drop_aligner.yaml
+target_max_age: 0.5 -> 2.5
+alignment_context_max_age: 0.5 -> 1.5
+```
+
+### 效果（同一次运行）
+
+```
+[mission] 搜索结束，用时 53s，发现 3 个目标
+bridge  对准: insufficient_stable_frames -> evidence_valid   （0.3 秒）
+bridge  第 1 次 投递成功=True 舵机=True
+tent    第 1 次 投递成功=True 舵机=True
+pillbox 第 1 次 投递成功=True 舵机=True
+[flight] corridor-1..11 全部到达
+[flight] descend-1.2 / 0.9 / 0.6 / 0.4 全部到达
+[mission] 完成：发现 3，投递 [True, True, True]，落点 (8.83, -4.22, 0.11)
+[cli] 任务结果: SUCCESS
+```
+
+**每个靶标从到达 evidence_valid 只用 0.3 秒**，与之前"150 秒都等不到"形成鲜明对比，
+证实根因判断正确。
+
+### 完整链路（现在的默认行为）
+
+起飞 1.5 m → 爬升 2.4 m 搜索（9 条割草机航线）→ 逐帧投影发现 3 靶（约 53 s）
+→ 逐靶 2.3 m 对准投递（`detections_mapped` + 常量补偿 (0.13,-0.16)）
+→ 走廊 11 段 → 尽头 H 板视觉降落。
