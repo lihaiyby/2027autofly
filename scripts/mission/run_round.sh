@@ -41,10 +41,8 @@ echo "== T1 自检 + 清理 =="
 bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
 source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
 
-cp -f "$ROOT/scripts/mission/mission_driver.py" /home/lihai/liftrace_sim/mission_driver.py
 cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
 cp -f "$ROOT/scripts/sim/odom_to_vision.py" /home/lihai/liftrace_sim/odom_to_vision.py
-chmod +x /home/lihai/liftrace_sim/mission_driver.py
 
 echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
 roslaunch patrol_control patrol_world.launch \
@@ -77,7 +75,7 @@ sleep 4
 sleep 20
 
 echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
-python3 -u /home/lihai/liftrace_sim/mission_driver.py 2.4 2.3 \
+PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_driver.py" 2.4 2.3 \
   > "$OUT/t9_driver.log" 2>&1 &
 T9=$!
 

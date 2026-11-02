@@ -1,0 +1,53 @@
+# 任务参数：高度、速度、航线、时限、重试
+# 全部键都对应 autofly.config.MissionConfig 的字段，缺省用代码里的默认值。
+
+takeoff_z: 1.5
+search_z: 2.4          # 搜索高度：≤2.1 m 时靶标圆环会被画面裁掉，测不到
+drop_z: 2.3            # 投递对准高度
+corridor_entry_z: 1.6
+
+max_xy_speed: 0.6
+max_jerk: 2.0
+
+want_classes: ["tent", "pillbox", "bridge", "panzer"]
+max_targets: 3
+
+search_timeout: 420
+align_timeout: 150
+vision_wait: 150
+
+takeoff_retries: 3
+drop_retries: 3
+drop_reset_offset: 0.8
+
+goto_tol: 0.40
+lane_tol: 0.55
+ready_frames: 3
+
+# 割草机搜索航线（依次经过的端点）
+search_lanes:
+  - [0.8, -4.0]
+  - [0.8,  4.0]
+  - [2.6,  4.0]
+  - [2.6, -4.0]
+  - [4.4, -4.0]
+  - [4.4,  4.0]
+  - [6.2,  4.0]
+  - [6.2, -4.0]
+  - [7.2, -4.0]
+
+# 走廊 11 段：门 A 在 y=1.6 走 x<8.8，门 B 在 y=-1.6 走 x>8.7
+corridor:
+  - [8.70,  4.30, 1.20]
+  - [9.10,  3.60, 1.10]
+  - [9.15,  2.80, 1.00]
+  - [8.80,  2.20, 1.00]
+  - [8.45,  1.60, 1.00]
+  - [8.45,  0.90, 1.00]
+  - [8.45,  0.20, 1.00]
+  - [8.80, -0.70, 1.00]
+  - [9.15, -1.60, 1.00]
+  - [8.85, -2.50, 1.00]
+  - [8.60, -3.40, 1.00]
+
+exit_pad: [8.75, -4.20]

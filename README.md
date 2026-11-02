@@ -88,3 +88,30 @@ python3 scripts/tools/scene_gen.py --seed 42
 - PX4 v1.14.3 SITL、MAVROS 1.20.1
 - 上游仓库 `~/liftrace_sim/liftrace-visionwork`、仿真底座 `~/AstraDroneOpen`
 - 详细环境与踩坑见 `docs/manual_start.md`、`docs/ai_worklog.md`
+
+## 工程结构
+
+```
+src/autofly/        任务包（可 import、可单测）
+  config.py         YAML -> MissionConfig，无 ROS 依赖
+  search.py         割草机航线 + 目标簿记 + 投递排序，无 ROS 依赖
+  flight.py         MAVROS 原语：解锁 / OFFBOARD / 设定点 / 模式守护
+  vision.py         /uav_vision 话题封装
+  mission.py        编排：起飞 -> 搜索 -> 投递 -> 走廊 -> 降落
+  cli.py            命令行入口
+config/mission.yaml 全部可调参数（高度、速度、航线、时限、重试）
+tests/              17 个纯逻辑单测，秒级跑完，不需要 ROS
+scripts/            启动脚本与兼容薄壳
+legacy/             重构前的单文件驱动（回退用）
+```
+
+常用：
+
+```bash
+make test       # 单测
+make dry-run    # 打印配置与航线（不启动 ROS）
+make run        # 跑任务（需仿真已启动）
+bash scripts/mission/run_round.sh 42   # 起仿真 + 一整回合
+```
+
+细节见 `docs/architecture.md`。
