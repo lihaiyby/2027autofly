@@ -80,7 +80,7 @@ PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_dri
 T9=$!
 
 WID=$(DISPLAY=:0 xwininfo -root -tree 2>/dev/null | grep -oE '0x[0-9a-f]+ "Gazebo"' | head -1 | cut -d' ' -f1)
-for i in $(seq 1 45); do
+for i in $(seq 1 90); do
   sleep 20
   if ! kill -0 $T9 2>/dev/null; then echo "  驱动结束"; break; fi
   if ! timeout 5 rostopic list > /dev/null 2>&1; then

@@ -9,12 +9,14 @@ from uav_vision.msg import DropReady, TargetCandidateArray
 class Vision:
     """订阅 targets / drop_ready / servo_complete，并提供若干发布者。"""
 
-    def __init__(self, align_mode_topic: str = "/uav_vision/align_mode"):
+    def __init__(self, align_mode_topic: str = "/uav_vision/align_mode", on_confirmed=None):
+        self.on_confirmed = on_confirmed      # 每帧把已确认目标回推给调用方
         self.ready = False
         self.reason = "-"
         self.ntgt = 0
         self.servo_done = False
         self._raw_targets = []
+        self._want_classes = ()
 
         rospy.Subscriber("/uav_vision/targets", TargetCandidateArray, self._targets_cb)
         rospy.Subscriber("/uav_vision/drop_ready", DropReady, self._ready_cb)
@@ -29,6 +31,14 @@ class Vision:
     def _targets_cb(self, msg: TargetCandidateArray) -> None:
         self.ntgt = len(msg.targets)
         self._raw_targets = list(msg.targets)
+        # 关键：每帧都累积，避免"采样最后一条消息"时正好为空
+        if self.on_confirmed is not None:
+            try:
+                items = self.confirmed(self._want_classes)
+                if items:
+                    self.on_confirmed(items)
+            except Exception:      # noqa: BLE001  回调不应影响订阅
+                pass
 
     def _ready_cb(self, msg: DropReady) -> None:
         self.ready = msg.ready
@@ -53,6 +63,9 @@ class Vision:
             mp = t.map_point
             out.append((t.class_name, mp.x, mp.y, float(getattr(t, "class_confidence", 0.0))))
         return out
+
+    def set_want_classes(self, classes) -> None:
+        self._want_classes = tuple(classes)
 
     # ---------- 控制 ----------
     def set_mode(self, mode: str) -> None:

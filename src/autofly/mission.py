@@ -17,8 +17,9 @@ class Mission:
     def __init__(self, cfg: MissionConfig):
         self.cfg = cfg
         self.flight = Flight()
-        self.vision = Vision()
         self.book = TargetBook(cfg.want_classes)
+        self.vision = Vision(on_confirmed=self.book.add_many)
+        self.vision.set_want_classes(cfg.want_classes)
         self.dropped = []
 
     # ---------- 内部工具 ----------
@@ -26,7 +27,8 @@ class Mission:
         rospy.loginfo("[mission] " + msg, *args)
 
     def _sync_book(self) -> None:
-        self.book.add_many(self.vision.confirmed(self.cfg.want_classes))
+        """兼容保留：累积已在 Vision 回调里完成。"""
+        return
 
     def _wait_vision(self) -> None:
         end = rospy.Time.now() + rospy.Duration(self.cfg.vision_wait)
@@ -101,6 +103,7 @@ class Mission:
             self.vision.set_mode("drop_circle")
             self.vision.enable_detect(True)
             self.vision.reset_ready()
+            self.vision.servo_done = False        # 每个靶标重新计回执
             stable = 0
             ok = False
             last = None
