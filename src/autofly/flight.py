@@ -34,9 +34,25 @@ class Flight:
         except rospy.ROSException:
             return None
 
-    def wait_services(self, timeout: float = 60.0) -> None:
-        rospy.wait_for_service("/mavros/cmd/arming", timeout=timeout)
-        rospy.wait_for_service("/mavros/set_mode", timeout=timeout)
+    def wait_services(self, timeout: float = 30.0) -> bool:
+        """等待 MAVROS 服务；超时返回 False（不抛异常，交给上层重试）。"""
+        for name in ("/mavros/cmd/arming", "/mavros/set_mode"):
+            try:
+                rospy.wait_for_service(name, timeout=timeout)
+            except rospy.ROSException:
+                rospy.logwarn("[flight] 等待服务 %s 超时", name)
+                return False
+        return True
+
+    def wait_connected(self, timeout: float = 120.0) -> bool:
+        """等 MAVROS 与飞控连上（connected: True）。"""
+        end = rospy.Time.now() + rospy.Duration(timeout)
+        while not rospy.is_shutdown() and rospy.Time.now() < end:
+            st = self.state()
+            if st is not None and st.connected:
+                return True
+            rospy.sleep(1.0)
+        return False
 
     # ---------- 参数 ----------
     def set_params(self, params: dict) -> None:

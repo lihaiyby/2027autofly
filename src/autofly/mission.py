@@ -18,13 +18,19 @@ class Mission:
         self.cfg = cfg
         self.flight = Flight()
         self.book = TargetBook(cfg.want_classes)
-        self.vision = Vision(on_confirmed=self.book.add_many)
+        self.vision = Vision(on_detection=self._on_detections)
+        self.vision.center_gate_px = cfg.center_gate_px
         self.vision.set_want_classes(cfg.want_classes)
         self.dropped = []
 
     # ---------- 内部工具 ----------
     def _log(self, msg: str, *args) -> None:
         rospy.loginfo("[mission] " + msg, *args)
+
+    def _on_detections(self, items) -> None:
+        """逐帧投影回调：加常量补偿后入簿记（比记忆融合点可靠）。"""
+        ox, oy = self.cfg.map_offset
+        self.book.add_many([(c, x + ox, y + oy, cf) for c, x, y, cf in items])
 
     def _sync_book(self) -> None:
         """兼容保留：累积已在 Vision 回调里完成。"""
@@ -41,7 +47,18 @@ class Mission:
     # ---------- phase 1：起飞 ----------
     def takeoff(self) -> bool:
         self._log("1/5 起飞")
-        self.flight.wait_services()
+        if not self.flight.wait_connected(120.0):
+            rospy.logerr("[mission] MAVROS 未连接，放弃")
+            return False
+        ok_srv = False
+        for _ in range(3):
+            if self.flight.wait_services(20.0):
+                ok_srv = True
+                break
+            rospy.sleep(2.0)
+        if not ok_srv:
+            rospy.logerr("[mission] MAVROS 服务不可用，放弃")
+            return False
         self.flight.set_params({
             "COM_ARM_EKF_YAW": 3.14,
             "COM_DISARM_PRFLT": -1.0,     # 关掉解锁后自动上锁

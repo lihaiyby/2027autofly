@@ -67,6 +67,12 @@ class MissionConfig:
     drop_retries: int = 3
     drop_reset_offset: float = 0.8
 
+    # 逐帧投影只接受圆环靠近画面中心的检测（像素半径门限）
+    center_gate_px: float = 150.0
+
+    # 地图投影常量补偿（标定得到：报出值 - 真值 = (-0.13, +0.16)）
+    map_offset: Tuple[float, float] = (0.13, -0.16)
+
     # 验收
     goto_tol: float = 0.40
     lane_tol: float = 0.55
@@ -86,6 +92,8 @@ class MissionConfig:
                 value = tuple(str(v) for v in value)
             elif key in ("search_lanes", "corridor"):
                 value = [tuple(float(x) for x in v) for v in value]
+            elif key == "map_offset":
+                value = tuple(float(x) for x in value)
             elif key == "exit_pad":
                 value = tuple(float(x) for x in value)      # 扁平 [x, y]
             setattr(cfg, key, value)

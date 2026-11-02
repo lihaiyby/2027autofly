@@ -1,24 +1,35 @@
 """视觉接口封装：把 /uav_vision 的几路话题收成一个对象。"""
 from __future__ import annotations
 
+import math
+
 import rospy
 from std_msgs.msg import Bool, String
-from uav_vision.msg import DropReady, TargetCandidateArray
+from uav_vision.msg import DropReady, TargetCandidateArray, TargetDetectionArray
 
 
 class Vision:
     """订阅 targets / drop_ready / servo_complete，并提供若干发布者。"""
 
-    def __init__(self, align_mode_topic: str = "/uav_vision/align_mode", on_confirmed=None):
-        self.on_confirmed = on_confirmed      # 每帧把已确认目标回推给调用方
+    def __init__(self, align_mode_topic: str = "/uav_vision/align_mode",
+                 on_confirmed=None, on_detection=None):
+        self.on_confirmed = on_confirmed      # 记忆里的已确认目标
+        self.on_detection = on_detection      # 逐帧投影（推荐）
         self.ready = False
         self.reason = "-"
         self.ntgt = 0
         self.servo_done = False
         self._raw_targets = []
         self._want_classes = ()
+        self.frame_targets = {}      # class -> (x, y) 最新逐帧投影
+        self.center_gate_px = 150.0  # 只接受偏移小于此值的检测
+        self.image_cx = 320.0        # 640x480 相机中心
+        self.image_cy = 240.0
 
         rospy.Subscriber("/uav_vision/targets", TargetCandidateArray, self._targets_cb)
+        # 逐帧投影：比记忆的融合点可靠得多（实测标准差 2~3 cm）
+        rospy.Subscriber("/uav_vision/detections_mapped", TargetDetectionArray,
+                         self._mapped_cb)
         rospy.Subscriber("/uav_vision/drop_ready", DropReady, self._ready_cb)
         rospy.Subscriber("/detect/servo_complete", Bool, self._servo_cb)
 
@@ -38,6 +49,32 @@ class Vision:
                 if items:
                     self.on_confirmed(items)
             except Exception:      # noqa: BLE001  回调不应影响订阅
+                pass
+
+    def _mapped_cb(self, msg: TargetDetectionArray) -> None:
+        if self.on_detection is None:
+            return
+        best = {}
+        for d in msg.detections:
+            if not getattr(d, "map_valid", False):
+                continue
+            cls = d.class_name
+            if self._want_classes and cls not in self._want_classes:
+                continue
+            conf = float(getattr(d, "geometry_confidence", 0.0))
+            # 中心偏移门限：斜视时投影误差会放大
+            cen = getattr(d, "center", None)
+            if cen is not None:
+                if math.hypot(cen.x - self.image_cx, cen.y - self.image_cy) > self.center_gate_px:
+                    continue
+            if cls not in best or conf > best[cls][2]:
+                best[cls] = (cls, d.map_point.x, d.map_point.y, conf)
+        if best:
+            for cls, x, y, _c in best.values():
+                self.frame_targets[cls] = (x, y)
+            try:
+                self.on_detection(list(best.values()))
+            except Exception:      # noqa: BLE001
                 pass
 
     def _ready_cb(self, msg: DropReady) -> None:
@@ -63,6 +100,10 @@ class Vision:
             mp = t.map_point
             out.append((t.class_name, mp.x, mp.y, float(getattr(t, "class_confidence", 0.0))))
         return out
+
+    def latest_frame(self, class_name: str):
+        """该类别最新一帧的地图坐标（逐帧投影，非记忆）。"""
+        return self.frame_targets.get(class_name)
 
     def set_want_classes(self, classes) -> None:
         self._want_classes = tuple(classes)
