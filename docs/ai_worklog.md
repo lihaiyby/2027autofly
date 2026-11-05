@@ -880,3 +880,42 @@ pillbox 第 1 次 投递成功=True 舵机=True
 4. **PX4 自动上锁 / OFFBOARD 失联**：`COM_DISARM_PRFLT=-1`、`COM_OF_LOSS_T=5.0`、
    起飞重试、`goto` 内模式守护。
 5. **重构回归**：目标必须每帧累积，不能采样"最后一条消息"。
+
+---
+
+## 24. 阶段二十四：修复"起飞后卡住"与投递 stale（11-05）
+
+**现象**：`run_round.sh` 打印到 `T3 任务` 后终端长时间无输出，看起来卡死。
+
+**根因 1（卡住）**：`Mission._wait_vision()` 等的是 `vision.ntgt > 0`（**已确认目标**），
+但起飞点 (0,0) 下方没有靶标，永远等不到 → 必然耗满 `vision_wait=150` **仿真秒**；
+RTF≈0.3 时等于 5–8 分钟墙钟，而且终端什么都不打印。
+修法：改等 `vision.frames > 3`（视觉链**有数据**即可），上限 30 s。
+实测日志变成 `视觉链已就绪（已收 102 帧）`，起飞后立即进入搜索。
+
+**根因 2（看着像卡住）**：驱动输出重定向到 `t9_driver.log`，终端全程静默。
+修法：驱动输出 `| tee` 到终端，监控循环每 20 秒打印一行 `[watch Ns] x/y/z`。
+
+**根因 3（投递 stale）**：`drop_ready` 长期 `stale_observation`——
+视觉链在 CPU 上延迟超过 `target_max_age=2.5s`。
+修法：`target_max_age 2.5 → 8.0`；检测输入 `416 → 320` 降延迟。
+
+**根因 4（投递偏差超过对准门限）**：搜索结果坐标与真值差约 1 m，
+圆环在画面里偏 ~290 px，超过 `max_offset_px=250` 判 `offset_exceeds_limit`。
+修法：投递时**追圆环**——用逐帧投影 `vision.frame_targets` 限幅逼近真实环心；
+`center_gate_px 150 → 400`（先看得到环，再收敛）。
+
+**结果（2026-11-05 13:19 运行）**：
+```
+[mission] 视觉链已就绪（已收 102 帧）
+[mission] lane 6/9 已发现 {'pillbox': (4.48,-4.83), 'tent': (4.65,-1.52), 'bridge': (4.61,2.05)}
+[mission] 搜索结束，用时 53s，发现 3 个目标
+[mission] bridge  第 1 次 投递成功=True 舵机=True
+[mission] tent    第 1 次 投递成功=True 舵机=True
+[mission] pillbox 第 1 次 投递成功=True 舵机=True
+[mission] 投递结果 [True, True, True]
+[mission] 走廊 11 段全部到达
+[mission] 完成：发现 3，投递 [True, True, True]，落点 (8.85, -4.20, 0.15)
+[cli] 任务结果: SUCCESS
+```
+三个靶**都是第 1 次即投中**（无需重试）。

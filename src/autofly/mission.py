@@ -37,12 +37,20 @@ class Mission:
         return
 
     def _wait_vision(self) -> None:
-        end = rospy.Time.now() + rospy.Duration(self.cfg.vision_wait)
+        """等视觉链**有数据**即可，不等"有目标"。
+
+        起飞点下方没有靶标，若等 ntgt>0 必然耗满超时（150 仿真秒，RTF 0.3 时约 8 分钟墙钟），
+        表现为"任务卡在起飞后不动"。
+        """
+        limit = min(30.0, float(self.cfg.vision_wait))
+        end = rospy.Time.now() + rospy.Duration(limit)
         while not rospy.is_shutdown() and rospy.Time.now() < end:
-            if self.vision.ntgt > 0:
+            if getattr(self.vision, "frames", 0) > 3:
+                self._log("  视觉链已就绪（已收 %d 帧）", self.vision.frames)
                 return
             self.flight.sp(0.0, 0.0, self.cfg.takeoff_z)
             self.flight.rate.sleep()
+        rospy.logwarn("[mission] 视觉链 %.0fs 内未见数据，继续搜索", limit)
 
     # ---------- phase 1：起飞 ----------
     def takeoff(self) -> bool:
@@ -126,6 +134,15 @@ class Mission:
             last = None
             t0 = rospy.Time.now()
             while not rospy.is_shutdown() and (rospy.Time.now() - t0).to_sec() < self.cfg.align_timeout:
+                # 追圆环：逐帧投影给出靶心的地图坐标，限幅逼近
+                cur = self.vision.latest_frame(cls)
+                if cur is not None:
+                    dx, dy = cur[0] - x, cur[1] - y
+                    dist = (dx * dx + dy * dy) ** 0.5
+                    if 0.02 < dist < 2.5:
+                        step = min(1.0, self.cfg.chase_gain)
+                        x += max(-0.35, min(0.35, dx * step))
+                        y += max(-0.35, min(0.35, dy * step))
                 self.flight.sp(x, y, self.cfg.drop_z)
                 if self.vision.reason != last:
                     last = self.vision.reason

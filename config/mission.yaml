@@ -21,6 +21,8 @@ drop_retries: 3
 drop_reset_offset: 0.8
 
 goto_tol: 0.40
+center_gate_px: 400
+chase_gain: 0.55
 lane_tol: 0.55
 ready_frames: 3
 

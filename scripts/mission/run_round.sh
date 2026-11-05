@@ -65,7 +65,7 @@ sleep 4
     image_topic:=/downward_camera/image_raw \
     camera_info_topic:=/downward_camera/camera_info \
     target_detector_launch_prefix:="$HOME/liftrace_sim/venv38/bin/python" \
-    target_model_path:="$UAV_VISION_MODEL_PATH" target_detector_imgsz:=416 \
+    target_model_path:="$UAV_VISION_MODEL_PATH" target_detector_imgsz:=320 \
     map_frame:=camera_init ground_z:=0.0 enable_debug_image:=false \
     start_legacy_compat:=true allow_latest_tf_fallback:=true max_latest_tf_age_sec:=2.0 \
     require_map_for_candidates:=$MEM_MAP \
@@ -75,8 +75,8 @@ sleep 4
 sleep 20
 
 echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
-PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_driver.py" 2.4 2.3 \
-  > "$OUT/t9_driver.log" 2>&1 &
+PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_driver.py" 2.4 2.3 2>&1 \
+  | tee "$OUT/t9_driver.log" &
 T9=$!
 
 WID=$(DISPLAY=:0 xwininfo -root -tree 2>/dev/null | grep -oE '0x[0-9a-f]+ "Gazebo"' | head -1 | cut -d' ' -f1)
@@ -86,9 +86,9 @@ for i in $(seq 1 90); do
   if ! timeout 5 rostopic list > /dev/null 2>&1; then
     echo "[watchdog] rosmaster 失联"; break
   fi
-  printf "[%3ds] " $((i*20)) >> "$OUT/pos.log"
-  timeout 5 rostopic echo -n 1 /mavros/local_position/pose/pose/position 2>/dev/null | tr -d '\n ' >> "$OUT/pos.log"
-  echo >> "$OUT/pos.log"
+  POS=$(timeout 5 rostopic echo -n 1 /mavros/local_position/pose/pose/position 2>/dev/null | tr -d '\n ' | sed 's/---//')
+  echo "[watch $((i*20))s] $POS"
+  printf "[%3ds] %s\n" $((i*20)) "$POS" >> "$OUT/pos.log"
   if [ "$i" = "8" ] || [ "$i" = "16" ] || [ "$i" = "24" ]; then
     [ -n "$WID" ] && DISPLAY=:0 import -window "$WID" "$OUT/shot_$i.png" 2>/dev/null
   fi

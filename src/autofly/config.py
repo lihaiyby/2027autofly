@@ -68,7 +68,8 @@ class MissionConfig:
     drop_reset_offset: float = 0.8
 
     # 逐帧投影只接受圆环靠近画面中心的检测（像素半径门限）
-    center_gate_px: float = 150.0
+    center_gate_px: float = 400.0   # 放宽：初始坐标可能偏 1 m，先看得到环再收敛
+    chase_gain: float = 0.55        # 追环步长系数（限幅 0.35 m/帧）
 
     # 地图投影常量补偿（标定得到：报出值 - 真值 = (-0.13, +0.16)）
     map_offset: Tuple[float, float] = (0.13, -0.16)

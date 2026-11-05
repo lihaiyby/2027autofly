@@ -18,6 +18,7 @@ class Vision:
         self.ready = False
         self.reason = "-"
         self.ntgt = 0
+        self.frames = 0        # 收到的 mapped 帧数（判断视觉链是否活着）
         self.servo_done = False
         self._raw_targets = []
         self._want_classes = ()
@@ -52,6 +53,7 @@ class Vision:
                 pass
 
     def _mapped_cb(self, msg: TargetDetectionArray) -> None:
+        self.frames += 1
         if self.on_detection is None:
             return
         best = {}
