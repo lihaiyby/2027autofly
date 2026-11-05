@@ -23,11 +23,15 @@ class Vision:
         self._raw_targets = []
         self._want_classes = ()
         self.frame_targets = {}      # class -> (x, y) 最新逐帧投影
+        self.frame_centers = {}      # class -> (px, py) 最新像素中心
+        self.raw_centers = {}        # class -> (px, py) 原始检测框中心（不要求 map_valid）
+        self.raw_centers_t = {}      # class -> rospy.Time 最后一次更新时刻
         self.center_gate_px = 150.0  # 只接受偏移小于此值的检测
         self.image_cx = 320.0        # 640x480 相机中心
         self.image_cy = 240.0
 
         rospy.Subscriber("/uav_vision/targets", TargetCandidateArray, self._targets_cb)
+        rospy.Subscriber("/uav_vision/detections", TargetDetectionArray, self._raw_cb)
         # 逐帧投影：比记忆的融合点可靠得多（实测标准差 2~3 cm）
         rospy.Subscriber("/uav_vision/detections_mapped", TargetDetectionArray,
                          self._mapped_cb)
@@ -52,6 +56,24 @@ class Vision:
             except Exception:      # noqa: BLE001  回调不应影响订阅
                 pass
 
+    def _raw_cb(self, msg: TargetDetectionArray) -> None:
+        best = {}
+        for d in msg.detections:
+            cls = d.class_name
+            if self._want_classes and cls not in self._want_classes:
+                continue
+            c = getattr(d, "center_px", None)
+            if c is None:
+                continue
+            conf = float(getattr(d, "class_confidence", 0.0))
+            old = best.get(cls)
+            if old is None or conf >= old[2]:
+                best[cls] = (cls, c.x, c.y, conf)
+        now = rospy.Time.now()
+        for cls, cx, cy, _cf in best.values():
+            self.raw_centers[cls] = (cx, cy)
+            self.raw_centers_t[cls] = now
+
     def _mapped_cb(self, msg: TargetDetectionArray) -> None:
         self.frames += 1
         if self.on_detection is None:
@@ -67,6 +89,7 @@ class Vision:
             # 中心偏移门限：斜视时投影误差会放大
             cen = getattr(d, "center", None)
             if cen is not None:
+                self.frame_centers[cls] = (cen.x, cen.y)
                 if math.hypot(cen.x - self.image_cx, cen.y - self.image_cy) > self.center_gate_px:
                     continue
             if cls not in best or conf > best[cls][2]:
@@ -102,6 +125,15 @@ class Vision:
             mp = t.map_point
             out.append((t.class_name, mp.x, mp.y, float(getattr(t, "class_confidence", 0.0))))
         return out
+
+    def fresh_center(self, class_name: str, max_age: float = 1.2):
+        t = self.raw_centers_t.get(class_name)
+        if t is None or (rospy.Time.now() - t).to_sec() > max_age:
+            return None
+        return self.raw_centers.get(class_name)
+
+    def latest_center(self, class_name: str):
+        return self.frame_centers.get(class_name)
 
     def latest_frame(self, class_name: str):
         """该类别最新一帧的地图坐标（逐帧投影，非记忆）。"""

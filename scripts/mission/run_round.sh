@@ -95,7 +95,7 @@ sleep 4
 sleep 20
 
 echo "== T3 任务：投递 -> 走廊 -> 尽头降落 $(date +%H:%M:%S) =="
-PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_driver.py" 2.4 2.3 2>&1 \
+PYTHONPATH="$ROOT/src:$PYTHONPATH" python3 -u "$ROOT/scripts/mission/mission_driver.py" 1.2 2.3 2>&1 \
   | tee "$OUT/t9_driver.log" &
 T9=$!
 

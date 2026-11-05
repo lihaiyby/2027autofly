@@ -135,6 +135,97 @@ class Mission:
         return len(self.book)
 
     # ---------- phase 3：投递 ----------
+
+    # ---------- 像素伺服 ----------
+    def _px_err(self, cls):
+        c = self.vision.fresh_center(cls, max_age=1.2)
+        if c is None:
+            c = self.vision.latest_center(cls)
+        if c is None:
+            return None
+        return (c[0] - self.vision.image_cx, c[1] - self.vision.image_cy)
+
+    def _settle_and_err(self, cls, x, y, z, wait=3.0):
+        """保持位置 wait 秒，返回期间像素误差的中位数。"""
+        xs, ys = [], []
+        end = rospy.Time.now() + rospy.Duration(wait)
+        while not rospy.is_shutdown() and rospy.Time.now() < end:
+            self.flight.sp(x, y, z)
+            e = self._px_err(cls)
+            if e is not None:
+                xs.append(e[0])
+                ys.append(e[1])
+            self.flight.rate.sleep()
+        if not xs:
+            return None
+        xs.sort()
+        ys.sort()
+        return (xs[len(xs) // 2], ys[len(ys) // 2])
+
+    def _pixel_servo(self, cls, x, y, z, probe=0.18, iters=8, tol_px=45.0):
+        """现场自标定 + 像素闭环。返回 (x, y, ok)。"""
+        e0 = self._settle_and_err(cls, x, y, z, 3.5)
+        if e0 is None:
+            self._log("    %s 像素伺服跳过：无检测", cls)
+            return x, y, False
+
+        # 探测 x 方向
+        self.flight.goto(x + probe, y, z, tol=0.10, timeout=25.0, label=f"{cls}-px-x")
+        ex = self._settle_and_err(cls, x + probe, y, z, 3.0)
+        # 探测 y 方向
+        self.flight.goto(x, y + probe, z, tol=0.10, timeout=25.0, label=f"{cls}-px-y")
+        ey = self._settle_and_err(cls, x, y + probe, z, 3.0)
+        self.flight.goto(x, y, z, tol=0.12, timeout=25.0, label=f"{cls}-px-back")
+        if ex is None or ey is None:
+            self._log("    %s 像素伺服跳过：探测失败", cls)
+            return x, y, False
+
+        a = (ex[0] - e0[0]) / probe
+        b = (ex[1] - e0[1]) / probe
+        c = (ey[0] - e0[0]) / probe
+        d = (ey[1] - e0[1]) / probe
+        det = a * d - b * c
+        self._log("    %s 雅可比 [[%.0f, %.0f], [%.0f, %.0f]] px/m det=%.0f",
+                  cls, a, c, b, d, det)
+        if abs(det) < 50.0:
+            self._log("    %s 雅可比奇异，放弃像素伺服", cls)
+            return x, y, False
+        ia, ic = d / det, -c / det
+        ib, id_ = -b / det, a / det
+
+        ok = False
+        last_e = None
+        stuck = 0
+        for i in range(1, iters + 1):
+            e = self._px_err(cls)
+            if e is None:
+                self.flight.sp(x, y, z)
+                self.flight.rate.sleep()
+                continue
+            if last_e is not None and abs(e[0] - last_e[0]) < 3 and abs(e[1] - last_e[1]) < 3:
+                stuck += 1
+                if stuck >= 3:
+                    self._log("    %s 像素误差不再变化，中止伺服", cls)
+                    break
+            else:
+                stuck = 0
+            last_e = e
+            if math.hypot(e[0], e[1]) < tol_px:
+                ok = True
+                self._log("    %s 像素对准完成 err=(%.0f, %.0f) px", cls, e[0], e[1])
+                break
+            dx = -(ia * e[0] + ic * e[1])
+            dy = -(ib * e[0] + id_ * e[1])
+            lim = 0.30
+            dx = max(-lim, min(lim, dx))
+            dy = max(-lim, min(lim, dy))
+            x += dx
+            y += dy
+            self._log("    %s 像素伺服 %d: err=(%.0f,%.0f) -> 目标 (%.2f,%.2f)",
+                      cls, i, e[0], e[1], x, y)
+            self.flight.goto(x, y, z, tol=0.12, timeout=20.0, label=f"{cls}-px{i}")
+        return x, y, ok
+
     def _deliver_one(self, cls: str, x: float, y: float) -> bool:
         for attempt in range(1, self.cfg.drop_retries + 1):
             self._log("  投递 %s (%0.2f, %0.2f) 第 %d 次", cls, x, y, attempt)
@@ -146,6 +237,12 @@ class Mission:
             self.vision.enable_detect(True)
             self.vision.reset_ready()
             self.vision.servo_done = False        # 每个靶标重新计回执
+
+            # 先做像素伺服：直接用"画面里靶标偏了多少像素"闭环，不依赖定位
+            x, y, px_ready = self._pixel_servo(cls, x, y, self.cfg.drop_z)
+            if px_ready:
+                self.flight.goto(x, y, self.cfg.drop_z, tol=0.10, timeout=25.0,
+                                 label=f"{cls}-px-lock")
             stable = 0
             near = 0
             ok = False
@@ -175,7 +272,8 @@ class Mission:
                     near = near + 1 if d_now <= self.cfg.ring_near_tol else 0
                 else:
                     near = 0
-                if stable >= self.cfg.ready_frames or near >= self.cfg.ring_stable_frames:
+                if px_ready or stable >= self.cfg.ready_frames \
+                        or near >= self.cfg.ring_stable_frames:
                     # 对准完成 -> 下降到释放高度（不触地）再投
                     z_rel = max(self.cfg.min_safe_z,
                                 min(self.cfg.release_z, self.cfg.drop_z - 0.2))
