@@ -1,9 +1,9 @@
 # 任务参数：高度、速度、航线、时限、重试
 # 全部键都对应 autofly.config.MissionConfig 的字段，缺省用代码里的默认值。
 
-takeoff_z: 1.5
-search_z: 2.4          # 搜索高度：≤2.1 m 时靶标圆环会被画面裁掉，测不到
-drop_z: 2.3            # 投递对准高度
+takeoff_z: 1.2
+search_z: 1.2          # 低空巡航：LIO 在此高度约束充足，不易发散
+drop_z: 2.3             # 圆环完整入画
 open_loop_fallback: true
 ring_near_tol: 0.28
 ring_stable_frames: 5
@@ -25,11 +25,11 @@ known_targets:
 max_targets: 3
 
 search_timeout: 420
-align_timeout: 60
+align_timeout: 25        # 高空停留尽量短：2.3 m 处 LIO 会漂
 vision_wait: 150
 
 takeoff_retries: 3
-drop_retries: 2
+drop_retries: 1
 drop_reset_offset: 0.8
 
 goto_tol: 0.40
