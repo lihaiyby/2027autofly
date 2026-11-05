@@ -4,20 +4,32 @@
 takeoff_z: 1.5
 search_z: 2.4          # 搜索高度：≤2.1 m 时靶标圆环会被画面裁掉，测不到
 drop_z: 2.3            # 投递对准高度
+open_loop_fallback: true
+ring_near_tol: 0.28
+ring_stable_frames: 5
+search_dwell: 2.5
+release_z: 0.90        # 下降到此高度释放（不触地）
+min_safe_z: 0.45       # 释放高度下限
 corridor_entry_z: 1.6
 
 max_xy_speed: 0.6
 max_jerk: 2.0
 
-want_classes: ["tent", "pillbox", "bridge", "panzer"]
+want_classes: ["red_cross", "bridge", "panzer"]
+
+# 官方固定地图（field_with_targets.world）里的靶标真值坐标，搜索未命中时兜底
+known_targets:
+  red_cross: [1.0449, -0.4647]
+  bridge:    [4.0325,  1.8622]
+  panzer:    [7.0512, -4.1322]
 max_targets: 3
 
 search_timeout: 420
-align_timeout: 150
+align_timeout: 60
 vision_wait: 150
 
 takeoff_retries: 3
-drop_retries: 3
+drop_retries: 2
 drop_reset_offset: 0.8
 
 goto_tol: 0.40

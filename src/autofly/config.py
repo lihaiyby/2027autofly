@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import List, Sequence, Tuple
+from typing import Dict, Tuple, List, Sequence, Tuple
 
 try:  # 允许在没有 PyYAML 的环境里 import 本模块做纯逻辑测试
     import yaml
@@ -69,7 +69,17 @@ class MissionConfig:
 
     # 逐帧投影只接受圆环靠近画面中心的检测（像素半径门限）
     center_gate_px: float = 400.0   # 放宽：初始坐标可能偏 1 m，先看得到环再收敛
-    chase_gain: float = 0.55        # 追环步长系数（限幅 0.35 m/帧）
+    chase_gain: float = 0.55
+    # 投递释放高度：对准在 drop_z 完成后下降到此高度释放，但不得低于 min_safe_z
+    # 官方固定地图的已知靶标坐标（搜索没覆盖到时兜底）
+    known_targets: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    # 逐帧投影判据：环心与机身水平距离 < tol 连续 frames 帧即可投
+    open_loop_fallback: bool = True   # 视觉确认不到时按已知坐标开环投递
+    ring_near_tol: float = 0.28
+    ring_stable_frames: int = 5
+    search_dwell: float = 2.5     # 每个搜索点悬停观察时长
+    release_z: float = 0.90
+    min_safe_z: float = 0.45        # 追环步长系数（限幅 0.35 m/帧）
 
     # 地图投影常量补偿（标定得到：报出值 - 真值 = (-0.13, +0.16)）
     map_offset: Tuple[float, float] = (0.13, -0.16)

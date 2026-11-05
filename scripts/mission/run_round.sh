@@ -9,6 +9,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUI=${GUI:-true}
 VEHICLE=${VEHICLE:-iris_mid360}
 MEM_MAP=${MEM_MAP:-true}
+USE_OFFICIAL=${USE_OFFICIAL:-0}
+USE_GT=${USE_GT:-0}
 SEED=${1:-42}
 WANT=${2:-panzer,pillbox,tent}
 FW=/home/lihai/liftrace_sim/final_worlds/B_05cm_seed38_20261008
@@ -16,16 +18,27 @@ SCENES=/home/lihai/liftrace_sim/scenes
 OUT=/home/lihai/liftrace_sim/out/round2_$(date +%m%d_%H%M)
 mkdir -p "$OUT"
 
-echo "== T0 场景生成 (seed=$SEED) =="
+if [ "$USE_OFFICIAL" = "1" ]; then
+  echo "== T0 使用官方固定地图 =="
+  WORLD="$FW/worlds/field_with_targets.world"
+  echo "  world=$WORLD"
+  ls -l "$WORLD" | awk '{print "  size:", $5}'
+else
+  echo "== T0 场景生成 (seed=$SEED) =="
 /home/lihai/liftrace_sim/venv38/bin/python \
   "$ROOT/scripts/tools/scene_gen.py" --seed "$SEED" --out "$SCENES" \
   | tee "$OUT/scene.log"
 WORLD="$SCENES/scene_$SEED.world"
 META="$SCENES/scene_$SEED.json"
 [ -f "$WORLD" ] || { echo "场景生成失败"; exit 1; }
+fi
 
-# 从 JSON 里取目标坐标（顺序按 WANT）
-TARGETS=$(/usr/bin/python3 - "$META" "$WANT" <<'PY'
+if [ "$USE_OFFICIAL" = "1" ]; then
+  echo "== TARGETS 跳过（官方地图，任务自己搜索 red_cross/bridge/panzer）=="
+  TARGETS=""
+else
+  # 从 JSON 里取目标坐标（顺序按 WANT）
+  TARGETS=$(/usr/bin/python3 - "$META" "$WANT" <<'PY'
 import json, sys
 meta = json.load(open(sys.argv[1]))
 want = [w.strip() for w in sys.argv[2].split(",") if w.strip()]
@@ -34,8 +47,9 @@ sel = [w for w in want if w in pos] or list(pos)[:3]
 print(";".join("%.2f,%.2f" % pos[n] for n in sel))
 PY
 )
-echo "  投递目标: $TARGETS"
-[ -n "$TARGETS" ] || { echo "取目标坐标失败"; exit 1; }
+  echo "  投递目标: $TARGETS"
+  [ -n "$TARGETS" ] || { echo "取目标坐标失败"; exit 1; }
+fi
 
 echo "== T1 自检 + 清理 =="
 bash "$ROOT/scripts/sim/cleanup_all.sh" > /dev/null 2>&1
@@ -44,9 +58,9 @@ source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1
 cp -f "$ROOT/scripts/sim/odom_to_tf.py" /home/lihai/liftrace_sim/odom_to_tf.py
 cp -f "$ROOT/scripts/sim/odom_to_vision.py" /home/lihai/liftrace_sim/odom_to_vision.py
 
-echo "== T2 仿真（新场景，GUI）$(date +%H:%M:%S) =="
+echo "== T2 仿真（GUI=$GUI, world=$(basename "$WORLD")）$(date +%H:%M:%S) =="
 roslaunch patrol_control patrol_world.launch \
-  world:="$WORLD" gui:=$GUI x:=0.0 y:=0.0 z:=0.06 vehicle:=$VEHICLE > "$OUT/t1_world.log" 2>&1 &
+  world:="$WORLD" gui:=$GUI x:=0.0 y:=0.0 z:=0.30 vehicle:=$VEHICLE > "$OUT/t1_world.log" 2>&1 &
 T1=$!
 sleep 40
 
@@ -54,10 +68,16 @@ python3 /home/lihai/liftrace_sim/camera_tf.py > "$OUT/t2_camtf.log" 2>&1 &
 python3 /home/lihai/liftrace_sim/livox_bridge.py > "$OUT/t3_bridge.log" 2>&1 &
 python3 /home/lihai/liftrace_sim/mock_servo.py > "$OUT/t4_servo.log" 2>&1 &
 sleep 5
-roslaunch fast_lio mapping_mid360_bridge.launch rviz:=false > "$OUT/t5_lio.log" 2>&1 &
-sleep 22
-python3 /home/lihai/liftrace_sim/odom_to_tf.py > "$OUT/t6_tf.log" 2>&1 &
-python3 /home/lihai/liftrace_sim/odom_to_vision.py > "$OUT/t7_visionpose.log" 2>&1 &
+if [ "$USE_GT" = "1" ]; then
+  echo "  [GT] 用 Gazebo 真值喂 PX4（跳过 Fast-LIO）"
+  python3 "$ROOT/scripts/sim/gt_bridge.py" > "$OUT/t5_gt.log" 2>&1 &
+  sleep 3
+else
+  roslaunch fast_lio mapping_mid360_bridge.launch rviz:=false > "$OUT/t5_lio.log" 2>&1 &
+  sleep 22
+  python3 /home/lihai/liftrace_sim/odom_to_tf.py > "$OUT/t6_tf.log" 2>&1 &
+  python3 /home/lihai/liftrace_sim/odom_to_vision.py > "$OUT/t7_visionpose.log" 2>&1 &
+fi
 sleep 4
 
 ( source /home/lihai/liftrace_sim/sim_env.sh > /dev/null 2>&1; \

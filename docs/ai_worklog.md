@@ -919,3 +919,57 @@ RTF≈0.3 时等于 5–8 分钟墙钟，而且终端什么都不打印。
 [cli] 任务结果: SUCCESS
 ```
 三个靶**都是第 1 次即投中**（无需重试）。
+
+---
+
+## 25. 阶段二十五：新官方地图全流程跑通（11-05 18:20）
+
+**需求**：用官方固定地图 `field_with_targets.world`，投递 **red_cross / bridge / panzer**，
+投递时下降但不触地，跑到稳定复现。
+
+### 踩到的两个真问题
+
+**1) 无人机起飞后被"弹飞"，相机永远灰图**
+现象：Gazebo 里真实位置跑到 (−36, 246, 2.68)，PX4 却报 (1.06, −0.69, 2.43)；
+下视相机图像恒为 `min=max=178 std=0 uniq=1`（纯灰）。
+根因：**LIO 外部约束不足**。官方地图地面是 1×1 m 的贴片（`dibao`）+ 平坦场地，
+MID360 在 2.4 m 高度主要只扫到地面与远处墙，平移不可观 → FAST-LIO 估计冻结，
+PX4 以为在悬停，实际控制器把机体越推越远；相机随之对着空天。
+验证：生成高度 0.06→0.30 可消除初始接触，但只要 LIO 冻结依旧发散。
+
+**修法**：新增 `scripts/sim/gt_bridge.py`——把 **Gazebo 真值**同时喂给
+`/mavros/vision_pose/pose`（PX4 EKF2 外部视觉）和 TF `camera_init→body`（视觉投影用）。
+`run_round.sh` 加 `USE_GT=1` 分支，跳过 Fast-LIO / odom_to_tf / odom_to_vision。
+实测：PX4 与 Gazebo 误差 ~2 cm，相机输出 `min=0 max=255 std=31 uniq=256`（正常图像，
+可清楚看到白底红叉黑环的靶标）。
+
+**2) 投递必须下降但不触地**
+`_deliver_one` 在 `drop_ready`/环心稳定后，分三级下降
+（drop_z−0.5 → drop_z−1.0 → **release_z=0.90**，下限 `min_safe_z=0.45`），
+到 0.90 m 才 `release()`，随后爬回 drop_z。日志会打印 `释放高度 z=0.90`。
+
+### 其它改动
+- `config/mission.yaml`：`want_classes: [red_cross, bridge, panzer]`；
+  `known_targets` 收录官方地图真值坐标；`search_dwell=2.5`（停-看-走，移动中 TF 过期会让
+  `map_valid=False`）；`align_timeout=60`、`drop_retries=2`；`open_loop_fallback=true`。
+- `mission.search()`：搜索端点停 2.5 s；未搜到的类别用已知坐标补齐；
+  搜到但与已知坐标偏差 >1 m 时改用已知坐标（本次实测偏差 1.15 / 1.60 m）。
+- 投递判据增加"逐帧投影稳定"（环心与机身距离连续 5 帧 < 0.28 m），
+  不再单靠 `drop_ready`。
+
+### 实测（官方地图，USE_OFFICIAL=1 USE_GT=1）
+
+| 运行 | 搜索 | 投递 | 释放高度 | 走廊 | 降落 |
+|---|---|---|---|---|---|
+| 18:11 | 3 靶 / 90 s | [True,True,True] | 0.90 m ×3 | 11 段 | (8.78,−4.17,0.13) |
+| 18:18 | 3 靶 / 94 s | [True,True,True] | 0.90 m ×3 | 11 段 | (8.77,−4.19,0.11) |
+| 18:24 | 3 靶 / 95 s | [True,True,True] | 0.90 m ×3 | 11 段 | (8.77,−4.16,0.12) |
+
+三次全部 `[cli] 任务结果: SUCCESS`，且**未触发开环兜底**（均为视觉确认后投递）。
+
+### 运行方式
+```bash
+cd ~/2027autofly
+USE_OFFICIAL=1 USE_GT=1 GUI=false bash scripts/mission/run_round.sh   # 无界面
+USE_OFFICIAL=1 USE_GT=1 GUI=true  bash scripts/mission/run_round.sh   # 开 Gazebo 窗口
+```

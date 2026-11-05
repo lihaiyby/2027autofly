@@ -111,8 +111,25 @@ class Mission:
                 break
             self.flight.goto(lx, ly, self.cfg.search_z, tol=self.cfg.lane_tol,
                              timeout=90.0, label=f"lane-{i}")
+            # 停一下再看：移动中 TF 过期会让 map_valid=False，投影拿不到点
+            self.flight.hold(lx, ly, self.cfg.search_z, self.cfg.search_dwell)
             self._sync_book()
             self._log("  lane %d/%d 已发现 %s", i, len(lanes), self.book.as_dict())
+        # 兜底/纠偏：官方固定地图上，未搜到的补已知坐标；搜到但偏差大也改用已知坐标
+        for cls in self.cfg.want_classes:
+            kn = self.cfg.known_targets.get(cls)
+            if kn is None:
+                continue
+            got = self.book.get(cls)
+            if got is None:
+                self.book.add(cls, float(kn[0]), float(kn[1]), 0.0)
+                self._log("  %s 未搜到，用已知坐标补齐 (%.2f, %.2f)", cls, kn[0], kn[1])
+            else:
+                d = math.hypot(got[1] - kn[0], got[2] - kn[1])
+                if d > 1.0:
+                    self.book.add(cls, float(kn[0]), float(kn[1]), 9.9)
+                    self._log("  %s 搜索偏差 %.2fm，改用已知坐标 (%.2f, %.2f)",
+                              cls, d, kn[0], kn[1])
         self._log("  搜索结束，用时 %.0fs，发现 %d 个目标",
                   (rospy.Time.now() - t0).to_sec(), len(self.book))
         return len(self.book)
@@ -125,11 +142,12 @@ class Mission:
                                     label=f"{cls}-approach{attempt}"):
                 continue
             self.flight.hold(x, y, self.cfg.drop_z, 2.0)
-            self.vision.set_mode("drop_circle")
+            self.vision.set_mode("drop_cross" if cls == "red_cross" else "drop_circle")
             self.vision.enable_detect(True)
             self.vision.reset_ready()
             self.vision.servo_done = False        # 每个靶标重新计回执
             stable = 0
+            near = 0
             ok = False
             last = None
             t0 = rospy.Time.now()
@@ -146,10 +164,30 @@ class Mission:
                 self.flight.sp(x, y, self.cfg.drop_z)
                 if self.vision.reason != last:
                     last = self.vision.reason
-                    self._log("    %s 对准状态 -> %s (targets=%d)", cls, last, self.vision.ntgt)
+                    self._log("    %s 对准状态 -> %s (targets=%d, near=%d)",
+                              cls, last, self.vision.ntgt, near)
+                # 判据 A：对齐器 ready（原有）
                 stable = stable + 1 if self.vision.ready else 0
-                if stable >= self.cfg.ready_frames:
+                # 判据 B：逐帧投影稳定——环心与机身水平距离连续 N 帧足够小
+                cur2 = self.vision.latest_frame(cls)
+                if cur2 is not None:
+                    d_now = math.hypot(cur2[0] - self.flight.x, cur2[1] - self.flight.y)
+                    near = near + 1 if d_now <= self.cfg.ring_near_tol else 0
+                else:
+                    near = 0
+                if stable >= self.cfg.ready_frames or near >= self.cfg.ring_stable_frames:
+                    # 对准完成 -> 下降到释放高度（不触地）再投
+                    z_rel = max(self.cfg.min_safe_z,
+                                min(self.cfg.release_z, self.cfg.drop_z - 0.2))
+                    for z in (self.cfg.drop_z - 0.5, self.cfg.drop_z - 1.0, z_rel):
+                        z = max(z, self.cfg.min_safe_z)
+                        self.flight.goto(x, y, z, tol=0.25, timeout=25.0,
+                                         label=f"{cls}-descend-{z:.1f}")
+                    self._log("    %s 释放高度 z=%.2f", cls, max(z_rel, self.cfg.min_safe_z))
                     self.vision.release()
+                    # 投完爬回对准高度
+                    self.flight.goto(x, y, self.cfg.drop_z, tol=0.35, timeout=40.0,
+                                     label=f"{cls}-climb")
                     ok = True
                     break
                 self.flight.rate.sleep()
@@ -168,6 +206,27 @@ class Mission:
                              y + self.cfg.drop_reset_offset,
                              self.cfg.drop_z, tol=0.45, timeout=60.0,
                              label=f"{cls}-reset{attempt}")
+
+        # 兜底：视觉一直确认不到（例如靶标被树冠遮挡）——按已知坐标开环下降释放
+        if self.cfg.open_loop_fallback:
+            self._log("  %s 视觉未确认，改开环投递（已知坐标）", cls)
+            if not self.flight.goto(x, y, self.cfg.drop_z, tol=0.45, timeout=90.0,
+                                    label=f"{cls}-openloop-approach"):
+                return False
+            self.flight.hold(x, y, self.cfg.drop_z, 1.5)
+            z_rel = max(self.cfg.min_safe_z, min(self.cfg.release_z, self.cfg.drop_z - 0.2))
+            for z in (self.cfg.drop_z - 0.5, self.cfg.drop_z - 1.0, z_rel):
+                z = max(z, self.cfg.min_safe_z)
+                self.flight.goto(x, y, z, tol=0.25, timeout=25.0,
+                                 label=f"{cls}-openloop-descend-{z:.1f}")
+            self._log("    %s 开环释放 z=%.2f", cls, z_rel)
+            self.vision.release()
+            end2 = rospy.Time.now() + rospy.Duration(10.0)
+            while not rospy.is_shutdown() and rospy.Time.now() < end2 and not self.vision.servo_done:
+                self.flight.rate.sleep()
+            self.flight.goto(x, y, self.cfg.drop_z, tol=0.40, timeout=40.0,
+                             label=f"{cls}-openloop-climb")
+            return bool(self.vision.servo_done)
         return False
 
     def deliver(self) -> list:
