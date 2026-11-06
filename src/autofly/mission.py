@@ -360,8 +360,10 @@ class Mission:
         self.vision.set_mode("landing")
         x, y = self.cfg.exit_pad
         self.flight.hold(x, y, self.cfg.corridor_entry_z, 5.0)
-        for z in (1.20, 0.90, 0.60, 0.40):
-            self.flight.goto(x, y, z, tol=0.30, timeout=45.0, label=f"descend-{z}")
+        # 只降到 1.2 m：再往下雷达几乎只看到地面，位置闭环容易发散
+        self.flight.goto(x, y, 1.20, tol=0.30, timeout=45.0, label="descend-1.20")
+        self.flight.hold(x, y, 1.20, 3.0)
+        self._log("  交出自动降落（AUTO.LAND），避免低空位置闭环")
         self.vision.set_mode("disabled")
         self.vision.enable_landing(False)
         self.flight.auto_land()
