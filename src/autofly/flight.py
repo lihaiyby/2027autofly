@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import math
+
+# LIO 在高于约 2.1 m 时几何约束不足会发散（实测 2.45 m 起��现上百米偏差），
+# 因此把设定点高度硬夹在此上限内。
+MAX_SAFE_Z = 2.00
 from typing import Callable, Optional
 
 import rospy
@@ -65,6 +69,7 @@ class Flight:
 
     # ---------- 设定点 ----------
     def sp(self, x: float, y: float, z: float) -> None:
+        z = min(z, MAX_SAFE_Z)
         m = PoseStamped()
         m.header.frame_id = "map"
         m.header.stamp = rospy.Time.now()
