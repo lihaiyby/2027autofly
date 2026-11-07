@@ -6,7 +6,13 @@
 - 解锁前把姿态固定为初始朝向（stabilize_yaw_until_armed:=true），
   避免 PX4 因 "heading estimate not stable" 拒绝解锁；解锁后转发 LIO 姿态。
 """
+import math
+
 import rospy
+
+# 隐含速度上限：超过即视为估计跳变，扣住不转发
+MAX_JUMP_SPEED = 2.5      # m/s
+MAX_JUMP_AGE = 0.5        # s，超过此间隔不做跳变判定
 import tf2_ros
 import tf2_geometry_msgs  # noqa: F401
 from geometry_msgs.msg import PoseStamped
@@ -27,6 +33,9 @@ class OdomToVision:
         self.buf = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.buf)
         self.pub = rospy.Publisher(self.output_topic, PoseStamped, queue_size=10)
+        self._last = None
+        self._last_t = 0.0
+        self._rejects = 0
         self.warned = False
         self.n = 0
         self.armed = False
@@ -70,6 +79,25 @@ class OdomToVision:
             ps.pose.orientation.z = 0.0
             ps.pose.orientation.w = 1.0
 
+        # ---- 跳变抑制 ----
+        now = ps.header.stamp.to_sec()
+        p = ps.pose.position
+        if self._last is not None:
+            dt = now - self._last_t
+            if 0.0 < dt <= MAX_JUMP_AGE:
+                d = math.dist((p.x, p.y, p.z),
+                              (self._last.x, self._last.y, self._last.z))
+                if d / dt > MAX_JUMP_SPEED:
+                    self._rejects += 1
+                    if self._rejects % 20 == 1:
+                        rospy.logwarn("odom_to_vision: 扣住跳变位姿 %.2f m/%.3f s "
+                                      "(%d 次)", d, dt, self._rejects)
+                    return
+            if now < self._last_t:
+                # 时间回跳：重置基线
+                self._last = None
+        self._last = p
+        self._last_t = now
         self.pub.publish(ps)
         self.n += 1
         if self.n % 200 == 0:

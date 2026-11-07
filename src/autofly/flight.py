@@ -6,6 +6,9 @@ import math
 # LIO 在高于约 2.1 m 时几何约束不足会发散（实测 2.45 m 起��现上百米偏差），
 # 因此把设定点高度硬夹在此上限内。
 MAX_SAFE_Z = 2.00
+# 单帧位置跳变阈值：超过即认为估计跳变（LIO 失锁的典型征兆）
+JUMP_LIMIT = 1.5          # m / 单帧
+SETPOINT_RATE = 0.6       # m/s，指令点推进上限
 from typing import Callable, Optional
 
 import rospy
@@ -118,24 +121,45 @@ class Flight:
         setpoint()
 
     # ---------- 航点 ----------
-    def goto(self, x: float, y: float, z: float, tol: float = 0.40,
-             timeout: float = 120.0, label: str = "") -> bool:
+    def goto(self, x: float, y: float, z: float, tol: float = 0.35,
+             timeout: float = 90.0, label: str = "") -> bool:
+        """限速推进到目标点：指令点每帧最多前进 SETPOINT_RATE * dt，避免速度突变。"""
+        z = min(z, MAX_SAFE_Z)
+        cx, cy, cz = self.x, self.y, self.z
         end = rospy.Time.now() + rospy.Duration(timeout)
-        tick = 0
+        last = rospy.Time.now()
+        prev = (self.x, self.y, self.z)
         while not rospy.is_shutdown() and rospy.Time.now() < end:
-            if abs(self.x) > 50.0 or abs(self.y) > 50.0 or self.z < -5.0:
-                rospy.logerr("[flight] %s 状态发散 (%.1f, %.1f, %.1f)", label, self.x, self.y, self.z)
-                raise SystemExit(3)
-            self.sp(x, y, z)
-            tick += 1
-            if tick % 40 == 0:
-                self.ensure(lambda: self.sp(x, y, z))
-            d = math.sqrt((self.x - x) ** 2 + (self.y - y) ** 2 + (self.z - z) ** 2)
-            if d < tol:
-                rospy.loginfo("[flight] %s 到达 (%.2f, %.2f, %.2f) d=%.2f", label, x, y, z, d)
+            now = rospy.Time.now()
+            dt = max(1e-3, (now - last).to_sec())
+            last = now
+            # 跳变检测
+            jump = math.dist((self.x, self.y, self.z), prev)
+            if jump > JUMP_LIMIT:
+                rospy.logerr("[flight] %s 位置跳变 %.2f m/帧，判定估计失锁，原地悬停",
+                             label, jump)
+                return False
+            prev = (self.x, self.y, self.z)
+            # 指令点限速逼近
+            step = SETPOINT_RATE * dt
+            d = math.dist((cx, cy, cz), (x, y, z))
+            if d > step and d > 1e-6:
+                k = step / d
+                cx += (x - cx) * k
+                cy += (y - cy) * k
+                cz += (z - cz) * k
+            else:
+                cx, cy, cz = x, y, z
+            self.sp(cx, cy, cz)
+            if math.dist((self.x, self.y, self.z), (x, y, z)) < tol:
+                if label:
+                    rospy.loginfo("[flight] %s 到达 (%.2f, %.2f, %.2f) d=%.2f",
+                                  label, x, y, z,
+                                  math.dist((self.x, self.y, self.z), (x, y, z)))
                 return True
             self.rate.sleep()
-        rospy.logwarn("[flight] %s 超时 (%.2f, %.2f, %.2f)", label, x, y, z)
+        if label:
+            rospy.logwarn("[flight] %s 超时 (%.2f, %.2f, %.2f)", label, x, y, z)
         return False
 
     def takeoff(self, z: float, retries: int = 3) -> bool:
